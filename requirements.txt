@@ -1,6 +1,6 @@
-langchain
+langchain==0.0.320
 openai
-faiss-cpu
+faiss-cpu==1.7.4
 tiktoken
 transformers
 sentence-transformers
@@ -9,9 +9,11 @@ pydantic
 numpy
 pandas
 fastapi
-uvicorn            # For running FastAPI as an API server
-rich               # For cleaner CLI/log output
-scikit-learn       # Useful for model utilities (metrics, preprocessing)
-bitsandbytes       # For quantized model loading (if using 4-bit LLMs)
-chromadb           # Optional: alternative to FAISS for vector storage
-sqlalchemy         # Useful for LangChain memory/tools and agents
+uvicorn
+rich
+scikit-learn
+bitsandbytes
+chromadb
+sqlalchemy
+pypdf
+sentencepiece
