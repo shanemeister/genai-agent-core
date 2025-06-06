@@ -1,0 +1,31 @@
+# LLM Configuration for GenAI Agent Core
+
+default_model: mistral_local
+
+models:
+  mistral_local:
+    type: local
+    model_path: models/mistral-7b
+    use_safetensors: true
+    use_fast: false
+
+  gpt_4o:
+    type: openai
+    model: gpt-4o
+    temperature: 0.3
+    top_p: 0.95
+    max_tokens: 400
+
+  gpt_4o_mini:
+    type: openai
+    model: gpt-4o-mini
+    temperature: 0.3
+    top_p: 0.95
+    max_tokens: 400
+
+  gpt_35:
+    type: openai
+    model: gpt-3.5-turbo
+    temperature: 0.3
+    top_p: 0.95
+    max_tokens: 400
