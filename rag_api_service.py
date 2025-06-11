@@ -4,18 +4,20 @@ from typing import Optional
 from chat.vectorstore_memory import retrieve_similar_context
 from app.interface.query_plus import ask_question
 from chat.vectorstore_memory import rebuild_vectorstore_from_documents
+from app.interface.query_plus import LLAMA3_MODEL_PATH
 
 app = FastAPI()
 
 class QueryRequest(BaseModel):
     query: str = Field(..., example="What is retrieval-augmented generation?")
-    session_id: Optional[str] = Field(None, example="user123")
-    model: Optional[str] = Field("mixtral", description="LLM model to use", example="gpt4o")
-    chat_enabled: Optional[bool] = Field(True, description="Enable chat memory")
-    filter_tag: Optional[str] = Field(None, example="interview")
-    filter_filename: Optional[str] = Field(None, example="my_notes.pdf")
-    filter_all: Optional[bool] = Field(False, description="Use all documents")
-    stream: Optional[bool] = Field(False, description="Enable streaming (Mixtral only)")
+    session_id: Optional[str] = Field(None, example="demo1")
+    model: Optional[str] = Field("mixtral", example="llama3")
+    chat_enabled: Optional[bool] = Field(True)
+    filter_tag: Optional[str] = None
+    filter_filename: Optional[str] = None
+    filter_all: Optional[bool] = Field(False)
+    stream: Optional[bool] = Field(False)
+    token_estimate: Optional[bool] = Field(False, description="Estimate token usage (for local models)")
 
 import time
 
@@ -51,14 +53,25 @@ def ask(req: QueryRequest):
             chat_enabled=req.chat_enabled,
             history=None
         )
-
+        token_count = None
+        if req.token_estimate and req.model in ["llama3", "mixtral"]:
+            from transformers import AutoTokenizer
+            tokenizer = AutoTokenizer.from_pretrained(
+                LLAMA3_MODEL_PATH if req.model == "llama3" else "gpt2",  # adjust as needed
+                local_files_only=True
+            )
+            token_count = len(tokenizer.encode(req.query))
         elapsed = round(time.time() - start_time, 2)
 
         return {
             "answer": response["answer"],
             "session_id": req.session_id,
             "sources": chunks,
-            "meta": response.get("meta", {})
+            "meta": {
+                **response.get("meta", {}),
+                "tokens_estimated": token_count,
+                "model": req.model
+            }
         }
 
     except Exception as e:

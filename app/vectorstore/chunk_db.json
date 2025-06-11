@@ -1,23 +1,23 @@
 [
   {
     "rank": 1,
-    "score": 1.4698482773793653e-13,
+    "score": 2.5463680643211806e-13,
     "source": "N/A",
     "tag": "N/A",
-    "content": "What is retrieval-augmented generation?"
+    "content": "Explain vector embeddings"
   },
   {
     "rank": 2,
-    "score": 2.251046571366544e-13,
+    "score": 2.5463680643211806e-13,
     "source": "N/A",
     "tag": "N/A",
-    "content": "What is retrieval-augmented generation?"
+    "content": "Explain vector embeddings"
   },
   {
     "rank": 3,
-    "score": 2.7239901957340495e-13,
+    "score": 1.0094215869903564,
     "source": "N/A",
     "tag": "N/A",
-    "content": "What is retrieval-augmented generation?"
+    "content": "You are an AI document analyst. Use the context below, which may include multiple files, to answer comprehensively.\n\nContext:\n[None] Explain vector embeddings\n\n[None] You are an AI document analyst. Use the context below, which may include multiple files, to answer comprehensively.\n\nContext:\n[None] "
   }
 ]

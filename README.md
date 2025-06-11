@@ -4,24 +4,21 @@ This project implements a production-ready Retrieval-Augmented Generation (RAG) 
 
 > ✅ Designed for technical interviews, enterprise search, or AI assistant prototyping — fully offline-capable and extensible.
 
----
 
-## ✅ Key Features
+✅ Key Features
+	•	🔍 RAG architecture: combines retrieval + generation for grounded, explainable answers.
+	•	🤖 Local LLM inference: runs on mistralai/Mistral-7B-Instruct (GGUF via llama.cpp) or HuggingFace models.
+	•	🧠 Semantic vector search: uses sentence-transformers and FAISS.
+	•	📦 FastAPI backend: exposes /ask and /rebuild endpoints with JSON responses.
+	•	🧰 Session memory: persists chat history in PostgreSQL.
+	•	📁 Document ingestion: supports .pdf, .docx, and .txt files via directory-based loader.
+	•	🧪 Swagger docs: self-documenting API.
+	•	🔐 Offline mode: models can run fully locally with no external API dependencies.
 
-* 🔍 **RAG architecture**: combines retrieval + generation for grounded, explainable answers.
-* 🤖 **Local LLM inference**: runs on `mistralai/Mistral-7B-Instruct` (GGUF via llama.cpp) or HuggingFace models.
-* 🧠 **Semantic vector search**: uses `sentence-transformers` and `FAISS`.
-* 📆 **FastAPI backend**: exposes `/ask` and `/rebuild` endpoints with JSON responses.
-* 💪 **Session memory**: persists chat history in PostgreSQL.
-* 📝 **Document ingestion**: supports `.pdf`, `.docx`, and `.txt` files via directory-based loader.
-* 🧪 **Swagger docs**: self-documenting API.
-* 🔐 **Offline mode**: models can run fully locally with no external API dependencies.
+⸻
 
----
+📁 Project Structure
 
-## 📁 Project Structure
-
-```
 genai-agent-core/
 ├── app/
 │   ├── interface/           # CLI tool for local RAG querying
@@ -103,19 +100,20 @@ Example POST to `/ask`:
 ```json
 {
   "query": "What is retrieval-augmented generation?",
-  "session_id": "test1"
+  "session_id": "test1",
+  "token_estimate": true,
+  "model": "llama3"
 }
 ```
 
 Response includes:
+	•	answer
+	•	sources[]: source text chunks
+	•	meta: elapsed_seconds, token count (for OpenAI)
 
-* `answer`
-* `sources[]`: source text chunks
-* `meta`: `elapsed_seconds`, token count (for OpenAI)
+⸻
 
----
-
-## 💡 Prompt Engineering
+💡 Prompt Engineering
 
 Prompts are dynamically constructed using:
 
@@ -125,9 +123,65 @@ Prompts are dynamically constructed using:
 
 You can customize this in `generate_prompt()` inside `query_plus.py`.
 
----
+⸻
 
-## 🧠 Model Options
+🧠 Model Options
+	•	Mixtral/Mistral: supports GGUF via llama.cpp + GPU
+	•	LLaMA3 8B: runs via HuggingFace transformers in FP16
+	•	GPT-4o: OpenAI fallback with YAML config + API key
 
-* **Mixtral/Mistral**: supports GGUF via `llama.cpp` + GPU
-* **LLaMA3 8B**: runs via HuggingFace `transformers` in FP
+To use OpenAI, set:
+
+export OPENAI_API_KEY=sk-...
+
+
+⸻
+
+🗃️ PostgreSQL Chat History
+
+Chat logs are stored in chathist.chat_history:
+	•	session_id, role, content, created_at
+	•	Used for session memory and context carryover
+
+Uses .pgpass for secure auth (no credentials in code).
+
+⸻
+
+📊 Metadata & Monitoring
+
+API responses include:
+	•	elapsed_seconds: total inference + retrieval time
+	•	tokens: OpenAI usage count if applicable
+
+Future additions:
+	•	Token estimation for local models
+	•	Latency breakdowns
+	•	Prometheus metrics
+
+⸻
+
+🧪 Testing / Debugging Tools
+
+Tool	Command
+Search vectorstore	python search_vectorstore.py "your query"
+Rebuild index	python rebuild_vs.py
+API call	curl -X POST http://127.0.0.1:8000/ask ...
+
+
+⸻
+
+🔐 Offline-First Capabilities
+
+Set local_files_only=True in AutoTokenizer and AutoModelForCausalLM to enforce offline mode.
+
+⸻
+
+🌐 Future Roadmap
+	•	✅ Swagger-enabled API
+	•	✅ Chat memory with PostgreSQL
+	•	⏳ User auth or API key guardrails
+	•	⏳ Vectorstore auto-refresh with S3 uploads
+	•	⏳ Web frontend (Streamlit or React)
+	•	⏳ GCP Cloud Run deployment config
+
+⸻
