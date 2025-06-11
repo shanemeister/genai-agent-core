@@ -21,7 +21,6 @@ This project implements a production-ready Retrieval-Augmented Generation (RAG) 
 📁 Project Structure
 
 <pre>
-```
 genai-agent-core/
 ├── app/
 │   ├── interface/           # CLI tool for local RAG querying
@@ -39,7 +38,6 @@ genai-agent-core/
 ├── search_vectorstore.py    # CLI tool for searching FAISS chunks
 ├── rebuild_vs.py            # Manual vectorstore rebuild runner
 └── requirements.txt
-```
 </pre>
 
 ⸻
@@ -49,11 +47,9 @@ genai-agent-core/
 1. Install dependencies
 
 <pre>
-```bash
 conda activate genai-core
 pip install -r requirements.txt
 pip install sentencepiece
-```
 </pre>
 
 ⸻
@@ -65,9 +61,7 @@ Drop your .pdf, .docx, or .txt files into data/ (or subfolders).
 Then run:
 
 <pre>
-```bash
 python rebuild_vs.py
-```
 </pre>
 
 This rebuilds the FAISS vector index with semantic embeddings using sentence-transformers.
@@ -77,9 +71,7 @@ This rebuilds the FAISS vector index with semantic embeddings using sentence-tra
 3. Query via CLI
 
 <pre>
-```bash
 python app/interface/query_plus.py "What is RAG?" --model mixtral --chat --session-id demo1
-```
 </pre>
 
 Options:
@@ -95,28 +87,24 @@ Options:
 Start the API:
 
 <pre>
-```bash
 uvicorn rag_api_service:app --reload
-```
 </pre>
 
 Visit docs:
 
 <pre>
-```bash
 http://127.0.0.1:8000/docs
+</pre>
 
 Example POST to /ask:
 
 <pre>
-```bash
 
 {
   "query": "What is retrieval-augmented generation?",
   "session_id": "test1"
 }
 
-```
 </pre>
 
 Response includes:
@@ -145,9 +133,7 @@ You can customize this in generate_prompt() inside query_plus.py.
 To use OpenAI, set:
 
 <pre>
-```bash
 export OPENAI_API_KEY=sk-...
-```
 </pre>
 
 ⸻
