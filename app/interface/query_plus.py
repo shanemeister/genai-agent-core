@@ -3,14 +3,19 @@ import sys
 import torch
 import yaml
 import json
+import time
 from collections import defaultdict
 from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parents[2]))
 import argparse
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_openai import ChatOpenAI
 from llama_cpp import Llama
+from chat.postgres_history import load_chat_history, save_message
+from chat.vectorstore_memory import retrieve_similar_context, add_to_vectorstore  # optional
+from app.llm_core import basic_query as call_model 
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 conversation_history = []
@@ -51,9 +56,7 @@ def ask_mistral_gguf(prompt, stream=False, history=None):
     try:
         print("\n💡 Using Mistral GGUF via llama.cpp")
         model = Llama(model_path=MISTRAL_GGUF_PATH, n_ctx=4096, n_gpu_layers=100, seed=42)
-        output = model(prompt, max_tokens=256)
-        print(output["choices"][0]["text"].strip())
-        
+
         if stream:
             print("📤 Streaming response:")
             response_stream = model.create_chat_completion(
@@ -61,9 +64,13 @@ def ask_mistral_gguf(prompt, stream=False, history=None):
                 max_tokens=256,
                 stream=True
             )
+            full_response = ""
             for chunk in response_stream:
-                print(chunk["choices"][0]["delta"].get("content", ""), end="", flush=True)
+                delta = chunk["choices"][0]["delta"].get("content", "")
+                print(delta, end="", flush=True)
+                full_response += delta
             print()
+            return full_response.strip()
         else:
             if history is None:
                 history = []
@@ -72,13 +79,14 @@ def ask_mistral_gguf(prompt, stream=False, history=None):
                 messages=history,
                 max_tokens=256
             )
-            print(output["choices"][0]["message"]["content"].strip())  
             response = output["choices"][0]["message"]["content"].strip()
             print(response)
-            history.append({"role": "assistant", "content": response})              
+            history.append({"role": "assistant", "content": response})
+            return response
+
     except Exception as e:
         print(f"⚠️ Mistral GGUF failed to load or generate: {e}\nFalling back to LLaMA 3...")
-        ask_llama3_hf(prompt)
+        return ask_llama3_hf(prompt)
 
 def ask_llama3_hf(prompt):
     try:
@@ -101,33 +109,50 @@ def ask_llama3_hf(prompt):
             eos_token_id=tokenizer.eos_token_id,
             pad_token_id=tokenizer.eos_token_id
         )
-        print(tokenizer.decode(outputs[0], skip_special_tokens=True))
+        response = tokenizer.decode(outputs[0], skip_special_tokens=True)
+        print(response)
+        return response
     except Exception as e:
         print(f"⚠️ LLaMA 3 failed to load or generate: {e}\nFalling back to GPT-4o...")
-        ask_openai(prompt, [])
+        return ask_openai(prompt, [])
 
 def ask_openai(question, context):
     if not OPENAI_API_KEY:
-        print("\u274C OPENAI_API_KEY not set. Cannot use OpenAI fallback.")
+        print("❌ OPENAI_API_KEY not set. Cannot use OpenAI fallback.")
         return
     os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
     prompt = generate_prompt(question, context)
-    print(f"\n\U0001F4AC Answer (OpenAI {openai_model_name}):\n")
-    response = llm.invoke(prompt)
+    print(f"\n💬 Answer (OpenAI {openai_model_name}):\n")
+    response = llm.invoke(prompt, return_usage=True)
     print(response.content)
+    print("📊 Token usage:", response.usage)
 
-def ask_question(question, model_choice="mixtral", filter_tag=None, filter_filename=None, filter_all=False, stream=False, history=None):
+    return response.content, response.usage
+
+import time
+
+def ask_question(
+    question, model_choice="mixtral",
+    filter_tag=None, filter_filename=None, filter_all=False,
+    stream=False, history=None,
+    session_id=None, chat_enabled=False
+):
+    start_time = time.time()
+    usage = {}
+
+    if chat_enabled and session_id:
+        history = load_chat_history(session_id)
+    else:
+        history = []
+
     db = load_vectorstore()
-    print("\n\U0001F50D Question:", question)
+    print("\n🔍 Question:", question)
 
     filter_kwargs = {}
     if filter_tag:
         filter_kwargs["metadata"] = {"tag": filter_tag}
     if filter_filename:
-        if "metadata" in filter_kwargs:
-            filter_kwargs["metadata"]["source"] = filter_filename
-        else:
-            filter_kwargs["metadata"] = {"source": filter_filename}
+        filter_kwargs.setdefault("metadata", {})["source"] = filter_filename
 
     if filter_all:
         all_docs = db.similarity_search("", k=1000)
@@ -136,27 +161,18 @@ def ask_question(question, model_choice="mixtral", filter_tag=None, filter_filen
         relevant_docs = db.similarity_search_with_score(question, k=3, **filter_kwargs)
 
     if not relevant_docs:
-        print("\u26A0\uFE0F No relevant documents found.")
-        return
+        print("⚠️ No relevant documents found.")
+        return {"answer": "", "meta": {"elapsed_seconds": 0, "tokens": None}}
 
     docs = [doc for doc, score in relevant_docs]
     prompt = generate_prompt(question, docs)
 
-    print("\n\U0001F4DA Top Retrieved Documents with Scores:")
+    print("\n📚 Top Retrieved Documents with Scores:")
     for i, (doc, score) in enumerate(relevant_docs):
         snippet = doc.page_content[:120].replace("\n", " ")
         source = doc.metadata.get("source", "N/A")
         tag = doc.metadata.get("tag", "N/A")
         print(f"[{i+1}] Score: {float(score):.4f} | File: {source} | Tag: {tag} | {snippet}...")
-
-    doc_by_source = defaultdict(list)
-    for doc, _ in relevant_docs:
-        source = doc.metadata.get("source", "unknown")
-        doc_by_source[source].append(doc)
-
-    print("\n📁 Document Contribution Summary:")
-    for src, doc_list in doc_by_source.items():
-        print(f"- {src}: {len(doc_list)} chunk(s)")
 
     chunk_metadata = []
     for i, (doc, score) in enumerate(relevant_docs):
@@ -173,19 +189,37 @@ def ask_question(question, model_choice="mixtral", filter_tag=None, filter_filen
         json.dump(chunk_metadata, f, indent=2)
     print(f"\n📦 Exported chunk metadata to: {chunk_db_path}")
 
+    answer = ""
+
     if model_choice == "gpt4o":
-        ask_openai(question, docs)
+        answer, usage = ask_openai(question, docs)
     elif model_choice == "llama3":
-        ask_llama3_hf(prompt)
+        answer = ask_llama3_hf(prompt)
     elif model_choice == "mixtral":
-        ask_mistral_gguf(prompt, stream=stream)
-        history = conversation_history.copy() if stream else []
-        ask_mistral_gguf(prompt, stream=stream, history=history)
         if stream:
+            history = conversation_history.copy()
+            answer = ask_mistral_gguf(prompt, stream=stream, history=history)
             conversation_history[:] = history
+        else:
+            answer = ask_mistral_gguf(prompt, stream=stream)
     else:
         raise ValueError("Invalid model choice: must be one of ['mixtral', 'llama3', 'gpt4o']")
 
+    if session_id and answer:
+        save_message(session_id, "user", question)
+        save_message(session_id, "assistant", answer)
+        add_to_vectorstore([question, answer])
+
+    elapsed = round(time.time() - start_time, 2)
+
+    return {
+        "answer": answer,
+        "meta": {
+            "elapsed_seconds": elapsed,
+            "tokens": usage.get("total_tokens", None)
+        }
+    }
+    
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Query your local or OpenAI LLM with optional filters.")
     parser.add_argument("question", type=str, help="Your question to ask.")
@@ -196,6 +230,7 @@ if __name__ == "__main__":
     parser.add_argument("--filter-all", action="store_true", help="Use all documents (no similarity filtering)")
     parser.add_argument("--stream", action="store_true", help="Stream response (for Mixtral GGUF)")
     parser.add_argument("--chat", action="store_true", help="Enable conversation memory (persistent across turns)")
+    parser.add_argument("--session-id", type=str, help="Session ID for persistent chat history")
     args = parser.parse_args()
 
     ask_question(
@@ -204,24 +239,8 @@ if __name__ == "__main__":
         filter_tag=args.filter_tag,
         filter_filename=args.filter_file,
         filter_all=args.filter_all,
-        stream=args.stream
-        )
-    if args.chat:
-        ask_question(
-            question=args.question,
-            model_choice=args.model,
-            filter_tag=args.filter_tag,
-            filter_filename=args.filter_file,
-            filter_all=args.filter_all,
-            stream=args.stream,
-            history=conversation_history
-        )
-    else:
-        ask_question(
-            question=args.question,
-            model_choice=args.model,
-            filter_tag=args.filter_tag,
-            filter_filename=args.filter_file,
-            filter_all=args.filter_all,
-            stream=args.stream
-        )
+        stream=args.stream,
+        history=conversation_history,
+        session_id=args.session_id,
+        chat_enabled=args.chat
+    )
