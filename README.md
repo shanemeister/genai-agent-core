@@ -1,109 +1,173 @@
-# 🧠 GenAI Agent Core (RAG + Local Mistral-7B)
 
-This project demonstrates a fully local Retrieval-Augmented Generation (RAG) pipeline using a Hugging Face transformer (Mistral-7B-Instruct) and LangChain with FAISS. It allows you to embed PDF documents and ask natural language questions grounded in that data.
+🧠 GenAI Agent Core — RAG Pipeline with Local LLM (Mixtral/Mistral)
 
----
+This project implements a production-ready Retrieval-Augmented Generation (RAG) assistant using LangChain, FAISS, and a local LLM (Mistral 7B or Mixtral). It supports both CLI and FastAPI interfaces for real-time question answering over embedded documents.
 
-## ✅ Features
+✅ Designed for technical interviews, enterprise search, or AI assistant prototyping — fully offline-capable and extensible.
 
-- Local LLM inference using `mistralai/Mistral-7B-Instruct-v0.1`
-- PDF document embedding with `sentence-transformers`
-- Vector search via FAISS
-- GPU support (CUDA or fallback to CPU)
-- Hugging Face token-based model access
-- CLI interface for asking questions about your documents
 
----
+✅ Key Features
+	•	🔍 RAG architecture: combines retrieval + generation for grounded, explainable answers.
+	•	🤖 Local LLM inference: runs on mistralai/Mistral-7B-Instruct (GGUF via llama.cpp) or HuggingFace models.
+	•	🧠 Semantic vector search: uses sentence-transformers and FAISS.
+	•	📦 FastAPI backend: exposes /ask and /rebuild endpoints with JSON responses.
+	•	🧰 Session memory: persists chat history in PostgreSQL.
+	•	📁 Document ingestion: supports .pdf, .docx, and .txt files via directory-based loader.
+	•	🧪 Swagger docs: self-documenting API.
+	•	🔐 Offline mode: models can run fully locally with no external API dependencies.
 
-## 🚀 How to Use
+⸻
 
-### 1. Install Dependencies
+📁 Project Structure
 
-Activate your Python environment and install from `requirements.txt`.
-
-```bash
-pip install -r requirements.txt
-```
-
-Make sure `sentencepiece` is installed:
-```bash
-pip install sentencepiece
-```
-
-### 2. Set Your Hugging Face Token
-
-Ensure your Hugging Face token is set (for gated models like Mistral):
-
-```bash
-export HUGGINGFACE_HUB_TOKEN=your_hf_token_here
-```
-
-You can add this to your `~/.zshrc` or `~/.bashrc` for persistence.
-
----
-
-### 3. Embed Your Documents
-
-Put PDFs in the `data/` folder and run:
-
-```bash
-python app/embedder.py
-```
-
-This creates a FAISS vector index in the `vectorstore/` directory.
-
----
-
-### 4. Ask a Question (Locally)
-
-```bash
-python app/query.py "What is covered in the first section of the PDF?"
-```
-
-The script:
-- Retrieves top-k document chunks from FAISS
-- Constructs a prompt
-- Sends the prompt to a local Mistral model
-- Prints the generated answer
-
----
-
-## 💡 Model Caching
-
-The model is stored in Hugging Face's global cache:
-```bash
-~/.cache/huggingface/hub/models--mistralai--Mistral-7B-Instruct-v0.1
-```
-
-To make it portable or offline-first, you can use `cache_dir="models/mistral-7b"` and add `models/` to your `.gitignore`.
-
----
-
-## 🛡️ Security & Offline Use
-
-Once the model and tokenizer are downloaded:
-- You can run completely offline
-- Set `local_files_only=True` in `from_pretrained()` to enforce this
-
----
-
-## 📁 Project Structure
-
-```
 genai-agent-core/
 ├── app/
-│   ├── embedder.py       # Converts PDFs into vector embeddings
-│   └── query.py          # Loads model + FAISS, runs inference
-├── data/                 # Place PDFs here
-├── vectorstore/          # Generated FAISS index
-├── models/               # Optional manual model storage
+│   ├── interface/           # CLI tool for local RAG querying
+│   │   └── query_plus.py    # Full-featured vector+LLM querying
+│   └── llm_core.py          # Basic model call wrappers
+├── chat/
+│   ├── postgres_history.py  # Session-aware chat logging to PostgreSQL
+│   └── vectorstore_memory.py# FAISS vectorstore + ingestion
+├── configs/
+│   └── llm_config.yaml      # Model config (OpenAI fallback)
+├── data/                    # Place PDFs, DOCX, and TXT files here
+├── vectorstore/             # Saved FAISS index
+├── models/                  # Local GGUF model storage (Mistral/Mixtral)
+├── rag_api_service.py       # FastAPI app with /ask and /rebuild
+├── search_vectorstore.py    # CLI tool for searching FAISS chunks
+├── rebuild_vs.py            # Manual vectorstore rebuild runner
 └── requirements.txt
-```
 
----
 
-## 🧠 Future Ideas
+⸻
 
-- GPT-4 fallback for hallucination checks
-- LangChain agents for structured querying
-- Streamlit UI or FastAPI backend
+🚀 Quickstart
+
+1. Install dependencies
+
+conda activate genai-core
+pip install -r requirements.txt
+pip install sentencepiece
+
+
+⸻
+
+2. Add your documents
+
+Drop your .pdf, .docx, or .txt files into data/ (or subfolders).
+
+Then run:
+
+python rebuild_vs.py
+
+This rebuilds the FAISS vector index with semantic embeddings using sentence-transformers.
+
+⸻
+
+3. Query via CLI
+
+python app/interface/query_plus.py "What is RAG?" --model mixtral --chat --session-id demo1
+
+Options:
+	•	--model mixtral|llama3|gpt4o
+	•	--filter-tag or --filter-file for scoped retrieval
+	•	--chat enables persistent memory
+	•	--session-id groups chats by user
+
+⸻
+
+4. Query via FastAPI
+
+Start the API:
+
+uvicorn rag_api_service:app --reload
+
+Visit docs:
+
+http://127.0.0.1:8000/docs
+
+Example POST to /ask:
+
+{
+  "query": "What is retrieval-augmented generation?",
+  "session_id": "test1"
+}
+
+Response includes:
+	•	answer
+	•	sources[]: source text chunks
+	•	meta: elapsed_seconds, token count (for OpenAI)
+
+⸻
+
+💡 Prompt Engineering
+
+Prompts are dynamically constructed using:
+	•	Retrieved chunks (similarity_search_with_score)
+	•	Optional session memory
+	•	Custom headers: “You are an AI document analyst…”
+
+You can customize this in generate_prompt() inside query_plus.py.
+
+⸻
+
+🧠 Model Options
+	•	Mixtral/Mistral: supports GGUF via llama.cpp + GPU
+	•	LLaMA3 8B: runs via HuggingFace transformers in FP16
+	•	GPT-4o: OpenAI fallback with YAML config + API key
+
+To use OpenAI, set:
+
+export OPENAI_API_KEY=sk-...
+
+
+⸻
+
+🗃️ PostgreSQL Chat History
+
+Chat logs are stored in chathist.chat_history:
+	•	session_id, role, content, created_at
+	•	Used for session memory and context carryover
+
+Uses .pgpass for secure auth (no credentials in code).
+
+⸻
+
+📊 Metadata & Monitoring
+
+API responses include:
+	•	elapsed_seconds: total inference + retrieval time
+	•	tokens: OpenAI usage count if applicable
+
+Future additions:
+	•	Token estimation for local models
+	•	Latency breakdowns
+	•	Prometheus metrics
+
+⸻
+
+🧪 Testing / Debugging Tools
+
+Tool	Command
+Search vectorstore	python search_vectorstore.py "your query"
+Rebuild index	python rebuild_vs.py
+API call	curl -X POST http://127.0.0.1:8000/ask ...
+
+
+⸻
+
+🔐 Offline-First Capabilities
+
+Set local_files_only=True in AutoTokenizer and AutoModelForCausalLM to enforce offline mode.
+
+⸻
+
+🌐 Future Roadmap
+	•	✅ Swagger-enabled API
+	•	✅ Chat memory with PostgreSQL
+	•	⏳ User auth or API key guardrails
+	•	⏳ Vectorstore auto-refresh with S3 uploads
+	•	⏳ Web frontend (Streamlit or React)
+	•	⏳ GCP Cloud Run deployment config
+
+⸻
