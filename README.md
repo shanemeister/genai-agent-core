@@ -1,24 +1,29 @@
-# 🧠 GenAI Agent Core — RAG Pipeline with Local LLM (Mixtral/Mistral)
+# 🧠 GenAI Agent Core — RAG Pipeline with Mixtral, LLaMA3, and OpenAI
 
-This project implements a production-ready Retrieval-Augmented Generation (RAG) assistant using **LangChain**, **FAISS**, and a **local LLM (Mistral 7B or Mixtral)**. It supports both CLI and FastAPI interfaces for real-time question answering over embedded documents.
+This project implements a production-ready Retrieval-Augmented Generation (RAG) assistant using **LangChain**, **FAISS**, and three model options: **Mixtral (GGUF)**, **LLaMA3 (Hugging Face Transformers)**, and **GPT-4o (OpenAI)**. It supports both CLI and FastAPI interfaces for real-time question answering over embedded documents.
 
 > ✅ Designed for technical interviews, enterprise search, or AI assistant prototyping — fully offline-capable and extensible.
 
+---
 
-✅ Key Features
-	•	🔍 RAG architecture: combines retrieval + generation for grounded, explainable answers.
-	•	🤖 Local LLM inference: runs on mistralai/Mistral-7B-Instruct (GGUF via llama.cpp) or HuggingFace models.
-	•	🧠 Semantic vector search: uses sentence-transformers and FAISS.
-	•	📦 FastAPI backend: exposes /ask and /rebuild endpoints with JSON responses.
-	•	🧰 Session memory: persists chat history in PostgreSQL.
-	•	📁 Document ingestion: supports .pdf, .docx, and .txt files via directory-based loader.
-	•	🧪 Swagger docs: self-documenting API.
-	•	🔐 Offline mode: models can run fully locally with no external API dependencies.
+## ✅ Key Features
 
-⸻
+* 🔍 **RAG architecture**: combines retrieval + generation for grounded, explainable answers.
+* 🤖 **Local LLM inference**: runs via `llama.cpp` or Hugging Face Transformers.
+* 🧠 **Semantic vector search**: uses `sentence-transformers` and `FAISS`.
+* 📆 **FastAPI backend**: exposes `/ask` and `/rebuild` endpoints with JSON responses.
+* 💪 **Session memory**: persists chat history in PostgreSQL.
+* 📝 **Document ingestion**: supports `.pdf`, `.docx`, and `.txt` files via directory-based loader.
+* 🧪 **Swagger docs**: self-documenting API.
+* 🔐 **Offline mode**: models can run fully locally with no external API dependencies.
+* 🔢 **Token estimation**: optional for local models like LLaMA3 and Mixtral.
+* 🧾 **Model logging**: API metadata includes model used and latency.
 
-📁 Project Structure
+---
 
+## 📁 Project Structure
+
+```
 genai-agent-core/
 ├── app/
 │   ├── interface/           # CLI tool for local RAG querying
@@ -31,7 +36,7 @@ genai-agent-core/
 │   └── llm_config.yaml      # Model config (OpenAI fallback)
 ├── data/                    # Place PDFs, DOCX, and TXT files here
 ├── vectorstore/             # Saved FAISS index
-├── models/                  # Local GGUF model storage (Mistral/Mixtral)
+├── models/                  # Local GGUF model storage (Mixtral) and HF model (LLaMA3)
 ├── rag_api_service.py       # FastAPI app with /ask and /rebuild
 ├── search_vectorstore.py    # CLI tool for searching FAISS chunks
 ├── rebuild_vs.py            # Manual vectorstore rebuild runner
@@ -101,19 +106,24 @@ Example POST to `/ask`:
 {
   "query": "What is retrieval-augmented generation?",
   "session_id": "test1",
-  "token_estimate": true,
-  "model": "llama3"
+  "model": "llama3",
+  "token_estimate": true
 }
 ```
 
 Response includes:
-	•	answer
-	•	sources[]: source text chunks
-	•	meta: elapsed_seconds, token count (for OpenAI)
 
-⸻
+* `answer`
+* `sources[]`: source text chunks
+* `meta`:
 
-💡 Prompt Engineering
+  * `elapsed_seconds`
+  * `tokens_estimated`
+  * `model`
+
+---
+
+## 💡 Prompt Engineering
 
 Prompts are dynamically constructed using:
 
@@ -123,65 +133,78 @@ Prompts are dynamically constructed using:
 
 You can customize this in `generate_prompt()` inside `query_plus.py`.
 
-⸻
+---
 
-🧠 Model Options
-	•	Mixtral/Mistral: supports GGUF via llama.cpp + GPU
-	•	LLaMA3 8B: runs via HuggingFace transformers in FP16
-	•	GPT-4o: OpenAI fallback with YAML config + API key
+## 🧠 Model Options
 
-To use OpenAI, set:
+* **Mixtral**: GGUF model run via `llama.cpp` (fast, parallelized on GPU)
+* **LLaMA 3 8B**: Hugging Face Transformers model running in FP16 on GPU
+* **GPT-4o**: OpenAI fallback using API + YAML config
 
+To use OpenAI:
+
+```bash
 export OPENAI_API_KEY=sk-...
+```
 
+---
 
-⸻
+## 💃 PostgreSQL Chat History
 
-🗃️ PostgreSQL Chat History
+Chat logs are stored in `chathist.chat_history`:
 
-Chat logs are stored in chathist.chat_history:
-	•	session_id, role, content, created_at
-	•	Used for session memory and context carryover
+* `session_id`, `role`, `content`, `created_at`
+* Used for session memory and context carryover
 
-Uses .pgpass for secure auth (no credentials in code).
+Uses `.pgpass` for secure auth (no credentials in code).
 
-⸻
+---
 
-📊 Metadata & Monitoring
+## 📊 Metadata & Monitoring
 
 API responses include:
-	•	elapsed_seconds: total inference + retrieval time
-	•	tokens: OpenAI usage count if applicable
 
-Future additions:
-	•	Token estimation for local models
-	•	Latency breakdowns
-	•	Prometheus metrics
+* `elapsed_seconds`: total inference + retrieval time
+* `tokens`: OpenAI usage count if applicable
+* `tokens_estimated`: estimated using tokenizer for local models
+* `model`: which LLM handled the request
 
-⸻
+---
 
-🧪 Testing / Debugging Tools
+## 🧪 Performance Comparison
 
-Tool	Command
-Search vectorstore	python search_vectorstore.py "your query"
-Rebuild index	python rebuild_vs.py
-API call	curl -X POST http://127.0.0.1:8000/ask ...
+| Model     | Latency (s) | Local | Token Usage   | Notes                            |
+| --------- | ----------- | ----- | ------------- | -------------------------------- |
+| Mixtral   | \~2.7       | ✅ Yes | estimated     | Fast + multi-GPU (llama.cpp)     |
+| LLaMA3-8B | \~11.2      | ✅ Yes | estimated     | HuggingFace, accurate, slower    |
+| GPT-4o    | \~1.5–2.5   | ❌ API | exact via API | Fastest, but external dependency |
 
+---
 
-⸻
+## 🔢 Testing / Debugging Tools
 
-🔐 Offline-First Capabilities
+| Tool               | Command                                      |
+| ------------------ | -------------------------------------------- |
+| Search vectorstore | `python search_vectorstore.py "your query"`  |
+| Rebuild index      | `python rebuild_vs.py`                       |
+| API query          | `curl -X POST http://127.0.0.1:8000/ask ...` |
 
-Set local_files_only=True in AutoTokenizer and AutoModelForCausalLM to enforce offline mode.
+---
 
-⸻
+## 🔐 Offline-First Capabilities
 
-🌐 Future Roadmap
-	•	✅ Swagger-enabled API
-	•	✅ Chat memory with PostgreSQL
-	•	⏳ User auth or API key guardrails
-	•	⏳ Vectorstore auto-refresh with S3 uploads
-	•	⏳ Web frontend (Streamlit or React)
-	•	⏳ GCP Cloud Run deployment config
+Set `local_files_only=True` in `AutoTokenizer` and `AutoModelForCausalLM` to enforce offline mode.
 
-⸻
+---
+
+## 🌐 Roadmap
+
+* ✅ Swagger-enabled API
+* ✅ Chat memory with PostgreSQL
+* ✅ LLaMA 3 support via Transformers
+* ✅ Token estimation for local models
+* ✅ Model logging in metadata
+* ⏳ User auth or API key guardrails
+* ⏳ Vectorstore auto-refresh with S3 uploads
+* ⏳ Web frontend (Streamlit or React)
+* ⏳ GCP Cloud Run deployment config
