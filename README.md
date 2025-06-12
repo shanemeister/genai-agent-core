@@ -216,3 +216,13 @@ Set `local_files_only=True` in `AutoTokenizer` and `AutoModelForCausalLM` to enf
 * ⏳ Vectorstore auto-refresh with S3 uploads
 * ⏳ Web frontend (Streamlit or React)
 * ⏳ GCP Cloud Run deployment config
+
+---
+
+## 👤 Author
+
+**Randall Shane** — [LinkedIn](https://www.linkedin.com/in/randall-shane/)
+
+Former systems architect and AI engineer with deep experience in cloud-native platforms, MLOps, and real-time inference systems. Currently focused on applying GenAI and machine learning to high-value prediction problems in sports analytics and decision intelligence.
+
+Building private, production-grade GenAI pipelines using LangChain, FAISS, and local LLMs — optimized for retrieval, reasoning, and human-in-the-loop workflows in constrained, high-signal environments.
