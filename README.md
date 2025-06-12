@@ -223,6 +223,6 @@ Set `local_files_only=True` in `AutoTokenizer` and `AutoModelForCausalLM` to enf
 
 **Randall Shane** — [LinkedIn](https://www.linkedin.com/in/randall-shane/)
 
-Former systems architect and AI engineer with deep experience in cloud-native platforms, MLOps, and real-time inference systems. Currently focused on applying GenAI and machine learning to high-value prediction problems in sports analytics and decision intelligence.
+Senior AI/ML Systems Architect with 20+ years of experience designing scalable, production-grade platforms across healthcare, finance, and enterprise analytics. Most recently led end-to-end GenAI and retrieval-augmented generation (RAG) development using LangChain, FAISS, and OpenAI/GCP models.
 
-Building private, production-grade GenAI pipelines using LangChain, FAISS, and local LLMs — optimized for retrieval, reasoning, and human-in-the-loop workflows in constrained, high-signal environments.
+This repository reflects my current focus: building secure, modular, and extensible GenAI pipelines that combine local and cloud-hosted LLMs with vector search, prompt engineering, and human-in-the-loop evaluation. I lead senior-level roles in AI/ML engineering or GenAI systems design, particularly where intelligent assistants and clinical/niche use cases are a focus.
