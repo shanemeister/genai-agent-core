@@ -4,6 +4,13 @@ This project implements a production-ready Retrieval-Augmented Generation (RAG) 
 
 > ✅ Designed for technical interviews, enterprise search, or AI assistant prototyping — fully offline-capable and extensible.
 
+⚠️ Note: This system requires a rather beefy workstation/server. I developed it using a system with the following specs:
+
+CPU: Threadripper 64 Core, 128 Threads
+Memory: 512 GB DDR5
+Disk: 20 TB NVMe SSD
+GPU: Two Nvidia A6000 GPUs
+
 ---
 
 ## ✅ Key Features
