@@ -1,0 +1,10 @@
+[
+  {
+    "question": "What is Randall Shane's background?",
+    "expected": "AI/ML platform builder",
+    "rules": [
+      {"type": "contains", "value": "AI"},
+      {"type": "length_gt", "value": "50"}
+    ]
+  }
+]

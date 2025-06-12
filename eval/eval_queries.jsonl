@@ -1,0 +1,1 @@
+{"question": "What is Randall Shane's main skill set?", "expected": "AI/ML platform builder", "cot": true, "rules": [{"type": "contains", "value": "AI"}, {"type": "length_gt", "value": "50"}]}

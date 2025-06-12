@@ -52,10 +52,25 @@ def generate_prompt(question, docs):
         f"Answer:"
     )
 
+# def generate_prompt(question, docs):
+#     context = "\n\n".join([
+#         f"[Source: {doc.metadata.get('source')}] {doc.page_content}" for doc in docs
+#     ])
+        
+#     return (
+#         "You are an AI document analyst. ONLY answer using the provided context. "
+#         "If the answer is not found, respond with 'Not stated in context.'\n\n"
+#         f"Context:\n{context}\n\n"
+#         f"Question: {question}\n\n"
+#         f"Answer:"
+#     )
+    
 def ask_mistral_gguf(prompt, stream=False, history=None):
     try:
         print("\n💡 Using Mistral GGUF via llama.cpp")
         model = Llama(model_path=MISTRAL_GGUF_PATH, n_ctx=4096, n_gpu_layers=100, seed=42)
+
+        prompt = "Only summarize what is explicitly stated in the context. Do not make assumptions.\n\n" + prompt
 
         if stream:
             print("📤 Streaming response:")
@@ -137,7 +152,8 @@ def ask_question(
     question, model_choice="mixtral",
     filter_tag=None, filter_filename=None, filter_all=False,
     stream=False, history=None,
-    session_id=None, chat_enabled=False
+    session_id=None, chat_enabled=False,
+    rules=None
 ):
     start_time = time.time()
     usage = {}
@@ -214,13 +230,34 @@ def ask_question(
 
     elapsed = round(time.time() - start_time, 2)
 
-    return {
-        "answer": answer,
-        "meta": {
-            "elapsed_seconds": elapsed,
-            "tokens": usage.get("total_tokens", None)
+    import __main__ as main_mod
+    if hasattr(main_mod, '__file__') and main_mod.__file__.endswith("query_eval.py"):
+        return answer
+    else:
+        print("\n📊 Evaluation Summary:")
+        for rule in rules or []:
+            rule_type = rule["type"]
+            rule_val = rule["value"]
+            if rule_type == "contains":
+                passed = rule_val.lower() in answer.lower()
+            elif rule_type == "length_gt":
+                passed = len(answer.strip()) > int(rule_val)
+            elif rule_type == "regex":
+                import re
+                passed = re.search(rule_val, answer) is not None
+            else:
+                passed = True
+            if passed:
+                print(f"✔️ Passed: Rule = {rule}")
+            else:
+                print(f"❌ Failed: Rule = {rule}")
+        return {
+            "answer": answer,
+            "meta": {
+                "elapsed_seconds": elapsed,
+                "tokens": usage.get("total_tokens", None)
+            }
         }
-    }
     
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Query your local or OpenAI LLM with optional filters.")
@@ -235,6 +272,7 @@ if __name__ == "__main__":
     parser.add_argument("--session-id", type=str, help="Session ID for persistent chat history")
     args = parser.parse_args()
 
+    # In CLI mode, rules must be passed (None unless set up externally)
     ask_question(
         question=args.question,
         model_choice=args.model,
@@ -244,5 +282,6 @@ if __name__ == "__main__":
         stream=args.stream,
         history=conversation_history,
         session_id=args.session_id,
-        chat_enabled=args.chat
+        chat_enabled=args.chat,
+        rules=None
     )
