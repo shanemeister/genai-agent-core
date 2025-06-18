@@ -1,37 +1,33 @@
 import os
 import sys
-import torch
-import yaml
-import json
 import time
-from collections import defaultdict
-from pathlib import Path
-sys.path.append(str(Path(__file__).resolve().parents[2]))
+import json
+import yaml
+import torch
 import argparse
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from pathlib import Path
 from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_openai import ChatOpenAI
-#from langchain_community.chat_models import ChatOpenAI
-#pip install -U langchain-community
-from llama_cpp import Llama
 from chat.postgres_history import load_chat_history, save_message
-from chat.vectorstore_memory import retrieve_similar_context, add_to_vectorstore  # optional
-from app.llm_core import basic_query as call_model 
-import __main__ as main_mod  
-from chat.postgres_history import load_chat_history, save_message
+from chat.vectorstore_memory import add_to_vectorstore
+from app.utils.vector_utils import get_vectorstore
 from app.llm.inference_runners import ask_llama3_hf, ask_mistral_gguf, ask_openai
-from app.configs import MISTRAL_GGUF_PATH, VECTORSTORE_PATH, LLAMA3_MODEL_PATH, DEVICE, HF_TOKEN, OPENAI_API_KEY
+from app.configs.global_constants import MISTRAL_GGUF_PATH, VECTORSTORE_PATH, LLAMA3_MODEL_PATH, DEVICE, HF_TOKEN, OPENAI_API_KEY
+from llama_cpp import Llama
+import __main__ as main_mod
 
+sys.path.append(str(Path(__file__).resolve().parents[2]))
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 conversation_history = []
 
-# Load OpenAI configuration from YAML
+# Load OpenAI model config
 config_path = os.path.join(os.path.dirname(__file__), "..", "configs", "llm_config.yaml")
 with open(config_path, "r") as f:
     config = yaml.safe_load(f)
 openai_model_name = config["models"]["gpt_4o_mini"]["model"]
 llm = ChatOpenAI(model=openai_model_name, temperature=0.3)
+
 
 def load_vectorstore():
     embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
@@ -41,7 +37,7 @@ def load_vectorstore():
         allow_dangerous_deserialization=True
     )
 
-# Use a pre-configured tokenizer for GGUF models
+
 llama_tokenizer = Llama(model_path=MISTRAL_GGUF_PATH, n_ctx=4096, n_gpu_layers=0, seed=42)
 
 def safe_token_len(llama_model, text):
@@ -50,7 +46,7 @@ def safe_token_len(llama_model, text):
     except Exception as e:
         print(f"⚠️ Tokenization failed: {e}")
         return 0
-    
+
 def generate_prompt(question, docs):
     context_chunks = []
     total_tokens = 0
@@ -90,14 +86,12 @@ def ask_question(
     db = load_vectorstore()
     print("\n🔍 Question:", question)
 
-    # Build filters
     filter_kwargs = {}
     if filter_tag:
         filter_kwargs["metadata"] = {"tag": filter_tag}
     if filter_filename:
         filter_kwargs.setdefault("metadata", {})["source"] = filter_filename
 
-    # Retrieve documents
     if filter_all:
         all_docs = db.similarity_search("", k=1000)
         relevant_docs = [(doc, 0.0) for doc in all_docs]
@@ -118,13 +112,12 @@ def ask_question(
         tag = doc.metadata.get("tag", "N/A")
         print(f"[{i+1}] Score: {float(score):.4f} | File: {source} | Tag: {tag} | {snippet}...")
 
-    # Export chunk metadata for debugging
     chunk_metadata = [
         {
-            "rank": int(i + 1),
+            "rank": i + 1,
             "score": float(score),
-            "source": str(doc.metadata.get("source", "N/A")),
-            "tag": str(doc.metadata.get("tag", "N/A")),
+            "source": doc.metadata.get("source", "N/A"),
+            "tag": doc.metadata.get("tag", "N/A"),
             "content": doc.page_content[:300]
         }
         for i, (doc, score) in enumerate(relevant_docs)
@@ -134,8 +127,6 @@ def ask_question(
         json.dump(chunk_metadata, f, indent=2)
     print(f"\n📦 Exported chunk metadata to: {chunk_db_path}")
 
-    # Run the model
-    answer = ""
     if model_choice == "gpt4o":
         answer, usage = ask_openai(question, docs)
     elif model_choice == "llama3":
@@ -149,7 +140,6 @@ def ask_question(
     else:
         raise ValueError("Invalid model choice: must be one of ['mixtral', 'llama3', 'gpt4o']")
 
-    # Save chat and update memory
     if session_id and answer:
         save_message(session_id, "user", question)
         save_message(session_id, "assistant", answer)
@@ -157,7 +147,6 @@ def ask_question(
 
     elapsed = round(time.time() - start_time, 2)
 
-    # CLI mode or batch eval mode
     if hasattr(main_mod, '__file__') and main_mod.__file__.endswith("query_eval.py"):
         return answer
     else:
@@ -185,30 +174,3 @@ def ask_question(
                 "tokens": usage.get("total_tokens", None)
             }
         }
-    
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Query your local or OpenAI LLM with optional filters.")
-    parser.add_argument("question", type=str, help="Your question to ask.")
-    parser.add_argument("--model", type=str, choices=["mixtral", "llama3", "gpt4o"], default="mixtral",
-                        help="Choose the LLM to use: mixtral (GGUF), llama3 (Transformers), or gpt4o (OpenAI).")
-    parser.add_argument("--filter-tag", type=str, help="Filter by semantic tag.")
-    parser.add_argument("--filter-file", type=str, help="Filter by source PDF filename.")
-    parser.add_argument("--filter-all", action="store_true", help="Use all documents (no similarity filtering)")
-    parser.add_argument("--stream", action="store_true", help="Stream response (for Mixtral GGUF)")
-    parser.add_argument("--chat", action="store_true", help="Enable conversation memory (persistent across turns)")
-    parser.add_argument("--session-id", type=str, help="Session ID for persistent chat history")
-    args = parser.parse_args()
-
-    # In CLI mode, rules must be passed (None unless set up externally)
-    ask_question(
-        question=args.question,
-        model_choice=args.model,
-        filter_tag=args.filter_tag,
-        filter_filename=args.filter_file,
-        filter_all=args.filter_all,
-        stream=args.stream,
-        history=conversation_history,
-        session_id=args.session_id,
-        chat_enabled=args.chat,
-        rules=None
-    )

@@ -1,10 +1,9 @@
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
 from typing import Optional
-from chat.vectorstore_memory import retrieve_similar_context
-from app.interface.query_plus import ask_question
-from chat.vectorstore_memory import rebuild_vectorstore_from_documents
-from app.interface.query_plus import LLAMA3_MODEL_PATH
+from chat.vectorstore_memory import retrieve_similar_context, get_vectorstore, rebuild_vectorstore_from_documents
+from app.interface.query_plus import ask_question, LLAMA3_MODEL_PATH
+import time
 
 app = FastAPI()
 
@@ -19,16 +18,12 @@ class QueryRequest(BaseModel):
     stream: Optional[bool] = Field(False)
     token_estimate: Optional[bool] = Field(False, description="Estimate token usage (for local models)")
 
-import time
-
 @app.post("/ask")
 def ask(req: QueryRequest):
     try:
         print(f"🔍 Incoming query: {req.query} (session_id={req.session_id})")
         start_time = time.time()
 
-        # vectorstore retrieval for metadata
-        from chat.vectorstore_memory import get_vectorstore
         vs = get_vectorstore()
         results = vs.similarity_search_with_score(req.query, k=3)
         chunks = [
@@ -41,7 +36,6 @@ def ask(req: QueryRequest):
             for doc, score in results
         ]
 
-        # run the model
         response = ask_question(
             question=req.query,
             model_choice=req.model,
@@ -53,14 +47,16 @@ def ask(req: QueryRequest):
             chat_enabled=req.chat_enabled,
             history=None
         )
+
         token_count = None
         if req.token_estimate and req.model in ["llama3", "mixtral"]:
             from transformers import AutoTokenizer
             tokenizer = AutoTokenizer.from_pretrained(
-                LLAMA3_MODEL_PATH if req.model == "llama3" else "gpt2",  # adjust as needed
+                LLAMA3_MODEL_PATH if req.model == "llama3" else "gpt2",
                 local_files_only=True
             )
             token_count = len(tokenizer.encode(req.query))
+
         elapsed = round(time.time() - start_time, 2)
 
         return {
@@ -70,13 +66,14 @@ def ask(req: QueryRequest):
             "meta": {
                 **response.get("meta", {}),
                 "tokens_estimated": token_count,
-                "model": req.model
+                "model": req.model,
+                "elapsed_seconds": elapsed
             }
         }
 
     except Exception as e:
         return {"error": str(e)}
-    
+
 @app.post("/rebuild")
 def rebuild_vectorstore():
     try:
