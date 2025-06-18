@@ -1,65 +1,23 @@
 [
   {
     "rank": 1,
-    "score": 0.0,
-    "source": "Randall_Shane_Resume_June_2025_AI_Engineer_Practice_Leader.docx",
-    "tag": "docs",
-    "content": "Randall (Randy) Shane\nChicago, IL 60187 \u2022 Cell: 704-807-1629\nrvs3129@gmail.com \u2022 https://www.linkedin.com/in/randall-shane/ \nAI/ML & DATA ENGINEERING PRACTICE LEADER\nBuilding Scalable Enterprise Driven Solutions\n\nSummary AWS/ML:\nCertified AWS Solutions Architect Professional | AWS ML Specialty | Gen"
-  },
-  {
-    "rank": 2,
-    "score": 0.0,
-    "source": "Randall Shane_Fitch_Cover_Letter.docx",
-    "tag": "docs",
-    "content": "\nRandall Shane\n1234 Ash Street, Saint Charles, IL 60174\nrvs3129@gmail.com \u2022 704-807-1629 \u2022 https://www.linkedin.com/in/randall-shane/\nJune 4, 2025\nHiring Committee\nFitch Group\nDear Hiring Committee,\nI am writing to express my strong interest in the\u00a0Principal AI Engineer / Director\u00a0position within th"
-  },
-  {
-    "rank": 3,
-    "score": 0.0,
-    "source": "Randall Shane_Fitch_Cover_Letter.pdf",
-    "tag": "pdfs",
-    "content": " \nRandall Shane \n1234 Ash Street, Saint Charles, IL 60174 \nrvs3129@gmail.com \u2022 704-807-1629 \u2022 https://www.linkedin.com/in/randall-shane/ \nJune 4, 2025 \nHiring Committee \nFitch Group \nDear Hiring Committee, \nI am writing to express my strong interest in the Principal AI Engineer / Director position \n"
-  },
-  {
-    "rank": 4,
-    "score": 0.0,
-    "source": "Randall_Shane_Resume_June_2025.docx",
-    "tag": "docs",
-    "content": "RANDALL (RANDY) SHANE\nChicago, IL 60187 \u2022 Cell: 704-807-1629\nrvs3129@gmail.com\u00a0\u2022\u00a0LinkedIn\n\nSenior AI Engineer | LLM Systems Architect | GenAI Platform Builder\nDelivering Production-Ready Intelligence at the Intersection of ML, Infra, and Product\n\nProfessional Summary\nDeeply technical AI/ML systems a"
-  },
-  {
-    "rank": 5,
-    "score": 0.0,
-    "source": "Randall_Shane_Resume_June_2025_AI_Engineer.docx",
-    "tag": "docs",
-    "content": "RANDALL (RANDY) SHANE\nChicago, IL 60187 \u2022 Cell: 704-807-1629\nrvs3129@gmail.com\u00a0\u2022\u00a0LinkedIn\n\nSenior AI Engineer | LLM Systems Architect | GenAI Platform Builder\nDelivering Production-Ready Intelligence at the Intersection of ML, Infra, and Product\n\nProfessional Summary\nDeeply technical AI/ML systems a"
-  },
-  {
-    "rank": 6,
-    "score": 0.0,
+    "score": 0.6300755739212036,
     "source": "rag_explained.txt",
     "tag": "docs",
     "content": "Retrieval-Augmented Generation (RAG) is a technique in LLM systems that augments a language model with external documents retrieved at runtime. This helps ensure that responses are grounded in factual content and remain up to date..."
   },
   {
-    "rank": 7,
-    "score": 0.0,
+    "rank": 2,
+    "score": 1.5108709335327148,
     "source": "Randall_Shane_Full_Resume_June_2025.docx",
     "tag": "docs",
     "content": "RANDALL (RANDY) SHANE\nChicago, IL 60187 \u2022 704-807-1629 \u2022 rvs3129@gmail.com \u2022 LinkedIn: https://www.linkedin.com/in/randall-shane/\n\nSENIOR AI/ML SYSTEMS ARCHITECT | LLM & DATA ENGINEERING LEADER\nDelivering Production-Ready Intelligence at the Intersection of Machine Learning, GenAI, and Scalable Infr"
   },
   {
-    "rank": 8,
-    "score": 0.0,
-    "source": "Randall_Shane_Resume_June_2025.pdf",
-    "tag": "pdfs",
-    "content": "\u2026 \nRANDALL (RANDY) SHANE \nChicago, IL 60187 \u2022 Cell: 704-807-1629 \nrvs3129@gmail.com \u2022 https://www.linkedin.com/in/randall-shane/  \n \nAI/ML Systems Architect | GenAI + Data Engineering Leader \nBuilding Full-Stack Intelligent Systems from Data to Decisions \nSummary: \nSenior AI/ML and data systems arch"
-  },
-  {
-    "rank": 9,
-    "score": 0.0,
-    "source": "Randall Shane-Founder Snapshot.docx",
+    "rank": 3,
+    "score": 1.550554871559143,
+    "source": "Randall_Shane_Resume_June_2025.docx",
     "tag": "docs",
-    "content": "Randall Shane \u2013 Founder Snapshot\nTechnical Founder | Systems Architect | AI/ML Platform Builder\n\n\u2705 Proven Track Record as a Startup Builder\nFounder & Visionary Behind KITS (Knowledgeable & Innovative Technical Solutions)\nBootstrapped with $30K and grew to $150M DoD contract\nArchitected and led devel"
+    "content": "RANDALL (RANDY) SHANE\nChicago, IL 60187 \u2022 Cell: 704-807-1629\nrvs3129@gmail.com\u00a0\u2022\u00a0LinkedIn\n\nSenior AI Engineer | LLM Systems Architect | GenAI Platform Builder\nDelivering Production-Ready Intelligence at the Intersection of ML, Infra, and Product\n\nProfessional Summary\nDeeply technical AI/ML systems a"
   }
 ]

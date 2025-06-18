@@ -12,6 +12,7 @@ from langchain_openai import ChatOpenAI
 from chat.postgres_history import load_chat_history, save_message
 from chat.vectorstore_memory import add_to_vectorstore
 from app.utils.vector_utils import get_vectorstore
+from app.utils.prompt_utils import generate_prompt
 from app.llm.inference_runners import ask_llama3_hf, ask_mistral_gguf, ask_openai
 from app.configs.global_constants import MISTRAL_GGUF_PATH, VECTORSTORE_PATH, LLAMA3_MODEL_PATH, DEVICE, HF_TOKEN, OPENAI_API_KEY
 from llama_cpp import Llama
@@ -21,13 +22,12 @@ sys.path.append(str(Path(__file__).resolve().parents[2]))
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 conversation_history = []
 
+
 # Load OpenAI model config
 config_path = os.path.join(os.path.dirname(__file__), "..", "configs", "llm_config.yaml")
 with open(config_path, "r") as f:
     config = yaml.safe_load(f)
-openai_model_name = config["models"]["gpt_4o_mini"]["model"]
-llm = ChatOpenAI(model=openai_model_name, temperature=0.3)
-
+# llm = get_openai_llm("gpt_4o_mini")
 
 def load_vectorstore():
     embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
@@ -46,27 +46,6 @@ def safe_token_len(llama_model, text):
     except Exception as e:
         print(f"⚠️ Tokenization failed: {e}")
         return 0
-
-def generate_prompt(question, docs):
-    context_chunks = []
-    total_tokens = 0
-    max_tokens = 3500
-
-    for doc in docs:
-        content = f"[{doc.metadata.get('source')}] {doc.page_content}"
-        num_tokens = safe_token_len(llama_tokenizer, content)
-        if total_tokens + num_tokens > max_tokens:
-            break
-        context_chunks.append(content)
-        total_tokens += num_tokens
-
-    context = "\n\n".join(context_chunks)
-    return (
-        "You are an AI document analyst. Use the context below, which may include multiple files, to answer comprehensively.\n\n"
-        f"Context:\n{context}\n\n"
-        f"Question: {question}\n\n"
-        f"Answer:"
-    )
 
 def ask_question(
     question, model_choice="mixtral",
@@ -128,7 +107,7 @@ def ask_question(
     print(f"\n📦 Exported chunk metadata to: {chunk_db_path}")
 
     if model_choice == "gpt4o":
-        answer, usage = ask_openai(question, docs)
+            answer, usage = ask_openai(question, docs, model_key="gpt_4o")
     elif model_choice == "llama3":
         answer = ask_llama3_hf(prompt)
     elif model_choice == "mixtral":

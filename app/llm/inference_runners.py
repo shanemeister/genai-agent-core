@@ -2,6 +2,7 @@ from app.utils.vector_utils import get_vectorstore
 from llama_cpp import Llama
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from langchain_openai import ChatOpenAI
+from app.interface.query_handler import generate_prompt
 import torch, os
 
 # Configuration and constants
@@ -12,17 +13,29 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 HF_TOKEN = os.getenv("HUGGINGFACE_HUB_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-def ask_openai(prompt, model_name="gpt-4o"):
-    if not OPENAI_API_KEY:
-        print("❌ OPENAI_API_KEY not set. Cannot use OpenAI fallback.")
-        return "", {}
+import yaml
+import os
 
-    print(f"\n💬 Answer (OpenAI {model_name}):\n")
-    llm = ChatOpenAI(model_name=model_name, temperature=0.3)
-    response = llm.invoke(prompt, return_usage=True)
+def get_openai_llm(model_key="gpt_4o"):
+    config_path = os.path.join(os.path.dirname(__file__), "..", "configs", "llm_config.yaml")
+    with open(config_path, "r") as f:
+        config = yaml.safe_load(f)
+    entry = config["models"].get(model_key, {})
+    model_name = entry.get("model")
+    if isinstance(model_name, list):
+        model_name = model_name[0]
+    from langchain_openai import ChatOpenAI
+    return ChatOpenAI(model_name=model_name, temperature=entry.get("temperature", 0.3))
+
+def ask_openai(question, context, model_key="gpt_4o"):
+    llm = get_openai_llm(model_key)
+    prompt = generate_prompt(question, context)
+    print(f"\n💬 Answer (OpenAI {model_key}):\n")
+    response = llm.invoke(prompt)
+    usage = {} 
     print(response.content)
-    print("📊 Token usage:", response.usage)
-    return response.content, response.usage
+    print("📊 Token usage:", usage)
+    return response.content, usage
 
 def ask_llama3_hf(prompt: str):
     try:
