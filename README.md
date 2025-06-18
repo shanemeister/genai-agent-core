@@ -34,23 +34,82 @@ This project implements a production-ready Retrieval-Augmented Generation (RAG) 
 ## 📁 Project Structure
 
 ```
-genai-agent-core/
-├── app/
-│   ├── interface/           # CLI tool for local RAG querying
-│   │   └── query_plus.py    # Full-featured vector+LLM querying
-│   └── llm_core.py          # Basic model call wrappers
-├── chat/
-│   ├── postgres_history.py  # Session-aware chat logging to PostgreSQL
-│   └── vectorstore_memory.py# FAISS vectorstore + ingestion
-├── configs/
-│   └── llm_config.yaml      # Model config (OpenAI fallback)
-├── data/                    # Place PDFs, DOCX, and TXT files here
-├── vectorstore/             # Saved FAISS index
-├── models/                  # Local GGUF model storage (Mixtral) and HF model (LLaMA3)
-├── rag_api_service.py       # FastAPI app with /ask and /rebuild
-├── search_vectorstore.py    # CLI tool for searching FAISS chunks
-├── rebuild_vs.py            # Manual vectorstore rebuild runner
-└── requirements.txt
+├── app
+│   ├── agents
+│   │   ├── doc_agent.py
+│   │   └── orchestrator.py
+│   ├── chains
+│   │   └── qa_chain.py
+│   ├── configs
+│   │   ├── llm_config.yaml
+│   │   ├── pdf_tags.yml
+│   │   └── prompts
+│   ├── embeddings
+│   │   └── embedder.py
+│   ├── interface
+│   │   ├── __pycache__
+│   │   │   ├── query_eval.cpython-310.pyc
+│   │   │   └── query_plus.cpython-310.pyc
+│   │   ├── query_eval.py
+│   │   ├── query_plus.py
+│   │   └── query.py
+│   ├── llm_core.py
+│   ├── loaders
+│   │   └── fhir_loaders.py
+│   ├── retrievers
+│   │   └── vector_retriever.py
+│   ├── tagging
+│   │   └── semantic_tagger.py
+│   ├── tools
+│   │   ├── __pycache__
+│   │   │   └── summarize.cpython-310.pyc
+│   │   └── summarize.py
+│   └── vectorstore
+│       ├── chunk_db.json
+│       ├── index.faiss
+│       └── index.pkl
+├── chat
+│   ├── postgres_history.py
+│   ├── __pycache__
+│   │   ├── postgres_history.cpython-310.pyc
+│   │   └── vectorstore_memory.cpython-310.pyc
+│   └── vectorstore_memory.py
+├── config.py
+├── data
+│   ├── csv
+│   ├── docs
+│   │   ├── rag_explained.txt
+│   ├── json
+│   ├── kindle
+│   ├── pdfs
+│   │   ├── 🎬
+│   └── text
+├── eval
+│   ├── eval_queries.json 
+│   └── eval_queries.jsonl
+├── LICENSE
+├── main.py
+├── models
+│   ├── download_mixtral.py
+│   ├── llama3-8b
+│   │   ├──  🎬
+│   ├── mistral-7b
+│   │   └── 🎬
+│   ├── mixtral-8x7b
+│   │   ├── 🎬
+│   ├── mixtral-gguf
+│   │   ├── 🎬
+│   └── model_test.py
+├── rag_api
+├── rag_api_service.py
+├── README.md
+├── rebuild_vs.py
+├── requirements.txt
+├── search_vectorstore.py
+├── test.py
+└── vectorstore
+    ├── index.faiss
+    └── index.pkl
 ```
 
 ---
