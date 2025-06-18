@@ -6,7 +6,7 @@ This project implements a production-ready Retrieval-Augmented Generation (RAG) 
 
 > ✅ Designed for technical interviews, enterprise search, or AI assistant prototyping — fully offline-capable and extensible.
 
-🚉 Platform: This system is built on a local machine to avoid cloud compute costs. However, it can be easily transforted to any cloud such as AWS, GCP, or Azure. To run locally requires a rather beefy workstation/server. I developed it using a system with the following specs:
+🚉 Platform: This system is built on a local machine to avoid cloud compute costs. However, it can be easily transported to any cloud such as AWS, GCP, or Azure. To run locally requires a rather beefy workstation/server. I developed it using a system with the following specs:
 
 * CPU: Threadripper 64 Core, 128 Threads
 * Memory: 512 GB DDR5
