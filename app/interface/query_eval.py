@@ -7,7 +7,7 @@ import re
 import tiktoken
 import difflib
 
-from query_plus import ask_question
+from app.interface.query_plus import ask_question
 
 
 def load_queries(file_path):
@@ -23,13 +23,18 @@ def load_queries(file_path):
 
 
 def evaluate_response(response, expected_answer, rules=None):
+    if isinstance(response, dict) and "answer" in response:
+        response = response["answer"]
+    elif not isinstance(response, str):
+        response = str(response)
     result = {"passed": True, "rules": []}
     for rule in (rules or []):
         rule_type = rule["type"]
         rule_val = rule["value"]
         if rule_type == "contains":
-            ok = rule_val.lower() in response.lower()
+            ok = str(rule_val).lower() in response.lower()
         elif rule_type == "not_contains":
+            ok = str(rule_val).lower() not in response.lower()
             ok = rule_val.lower() not in response.lower()
         elif rule_type == "length_gt":
             ok = len(response.strip()) > int(rule_val)
@@ -43,11 +48,14 @@ def evaluate_response(response, expected_answer, rules=None):
             enc = tiktoken.get_encoding("cl100k_base")
             ok = len(enc.encode(response)) > int(rule_val)
         elif rule_type == "fuzzy_match":
-            response_clean = response.strip().lower()
-            rule_val_clean = rule_val.strip().lower()
-            window = response_clean[:len(rule_val_clean) + 20]
-            ratio = difflib.SequenceMatcher(None, window, rule_val_clean).ratio()
-            ok = ratio >= float(rule.get("threshold", 0.8))
+            if isinstance(rule_val, dict):
+                expected_str = rule_val.get("value", "")
+                threshold = float(rule_val.get("threshold", 0.8))
+            else:
+                expected_str = rule_val
+                threshold = float(rule.get("threshold", 0.8))
+            ratio = difflib.SequenceMatcher(None, response.strip().lower(), expected_str.strip().lower()).ratio()
+            ok = ratio >= threshold
         else:
             ok = True
         result["rules"].append({"rule": rule, "passed": ok})

@@ -2,9 +2,11 @@
 
 This project implements a production-ready Retrieval-Augmented Generation (RAG) assistant using **LangChain**, **FAISS**, and three model options: **Mixtral (GGUF)**, **LLaMA3 (Hugging Face Transformers)**, and **GPT-4o (OpenAI)**. It supports both CLI and FastAPI interfaces for real-time question answering over embedded documents.
 
+⚠️ Note: This is a continuous work on progress as time allows. Please check back frequently for update. 
+
 > ✅ Designed for technical interviews, enterprise search, or AI assistant prototyping — fully offline-capable and extensible.
 
-⚠️ Note: This system requires a rather beefy workstation/server. I developed it using a system with the following specs:
+🚉 Platform: This system is built on a local machine to avoid cloud compute costs. However, it can be easily transforted to any cloud such as AWS, GCP, or Azure. To run locally requires a rather beefy workstation/server. I developed it using a system with the following specs:
 
 * CPU: Threadripper 64 Core, 128 Threads
 * Memory: 512 GB DDR5
