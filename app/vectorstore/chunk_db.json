@@ -1,23 +1,23 @@
 [
   {
     "rank": 1,
-    "score": 0.6300755739212036,
-    "source": "rag_explained.txt",
-    "tag": "docs",
-    "content": "Retrieval-Augmented Generation (RAG) is a technique in LLM systems that augments a language model with external documents retrieved at runtime. This helps ensure that responses are grounded in factual content and remain up to date..."
+    "score": 2.602430261306604e-13,
+    "source": "N/A",
+    "tag": "N/A",
+    "content": "Is Randall Shane qualified as an AI/ML Engineering?"
   },
   {
     "rank": 2,
-    "score": 1.5108709335327148,
-    "source": "Randall_Shane_Full_Resume_June_2025.docx",
+    "score": 0.9644511342048645,
+    "source": "Randall Shane-Founder Snapshot.docx",
     "tag": "docs",
-    "content": "RANDALL (RANDY) SHANE\nChicago, IL 60187 \u2022 704-807-1629 \u2022 rvs3129@gmail.com \u2022 LinkedIn: https://www.linkedin.com/in/randall-shane/\n\nSENIOR AI/ML SYSTEMS ARCHITECT | LLM & DATA ENGINEERING LEADER\nDelivering Production-Ready Intelligence at the Intersection of Machine Learning, GenAI, and Scalable Infr"
+    "content": "Randall Shane \u2013 Founder Snapshot\nTechnical Founder | Systems Architect | AI/ML Platform Builder\n\n\u2705 Proven Track Record as a Startup Builder\nFounder & Visionary Behind KITS (Knowledgeable & Innovative Technical Solutions)\nBootstrapped with $30K and grew to $150M DoD contract\nArchitected and led devel"
   },
   {
     "rank": 3,
-    "score": 1.550554871559143,
-    "source": "Randall_Shane_Resume_June_2025.docx",
+    "score": 1.0105730295181274,
+    "source": "Randall_Shane_Resume_June_2025_AI_Engineer_Practice_Leader.docx",
     "tag": "docs",
-    "content": "RANDALL (RANDY) SHANE\nChicago, IL 60187 \u2022 Cell: 704-807-1629\nrvs3129@gmail.com\u00a0\u2022\u00a0LinkedIn\n\nSenior AI Engineer | LLM Systems Architect | GenAI Platform Builder\nDelivering Production-Ready Intelligence at the Intersection of ML, Infra, and Product\n\nProfessional Summary\nDeeply technical AI/ML systems a"
+    "content": "Randall (Randy) Shane\nChicago, IL 60187 \u2022 Cell: 704-807-1629\nrvs3129@gmail.com \u2022 https://www.linkedin.com/in/randall-shane/ \nAI/ML & DATA ENGINEERING PRACTICE LEADER\nBuilding Scalable Enterprise Driven Solutions\n\nSummary AWS/ML:\nCertified AWS Solutions Architect Professional | AWS ML Specialty | Gen"
   }
 ]

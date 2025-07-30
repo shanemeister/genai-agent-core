@@ -6,7 +6,7 @@ DB_CONFIG = {
     "host": "192.168.4.25",
     "port": 5433,
     "dbname": "chathist",
-    "user": "rshane",  # Replace with your actual username
+    "user": "rshane",  
 }
 
 def get_connection():
