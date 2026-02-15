@@ -5,12 +5,33 @@ import re
 import time
 import uuid
 from core.artifacts.storage_sqlite import load_all_cards, upsert_card
+from core.artifacts.storage_sessions import (
+    ChatMessage as SessionChatMessage,
+    ChatSession,
+    save_session,
+    load_session,
+    list_sessions,
+    delete_session,
+    init_sessions_db,
+)
+from core.artifacts.mindfile_entry import MindFileEntry, MindFileEntryCategory
+from core.artifacts.storage_mindfile import (
+    init_mindfile_db,
+    save_entry as save_mindfile_entry,
+    load_all_entries as load_mindfile_entries,
+    load_entry as load_mindfile_entry,
+    update_note as update_mindfile_note,
+    delete_entry as delete_mindfile_entry,
+    entry_exists_for_card,
+)
 from typing import List, Optional
 
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
 from starlette.responses import StreamingResponse
 import httpx
+
+from core.validation.models import ValidationResult
 
 from core.artifacts.memory_card import (
     MemoryApproval,
@@ -21,9 +42,11 @@ from core.artifacts.memory_card import (
 )
 from core.graph.models import (
     ConceptCreate,
+    DiagramToGraphRequest,
     GraphData,
     GraphEdge,
     GraphNode,
+    GraphToDiagramRequest,
     NeighborRequest,
     RelationshipCreate,
 )
@@ -71,6 +94,8 @@ MEMORY_CARDS: dict[str, MemoryCard] = {}
 async def _startup():
     global MEMORY_CARDS
     MEMORY_CARDS = await load_all_cards()
+    await init_sessions_db()
+    await init_mindfile_db()
     try:
         await init_driver()
         await ensure_schema()
@@ -162,6 +187,22 @@ async def approve_card(card_id: str):
         await graph_queries.sync_memory_card(card)
     except Exception:
         pass  # Graph sync is best-effort
+    # Auto-promote to Mind File
+    try:
+        if not await entry_exists_for_card(card.id):
+            entry = MindFileEntry(
+                category=MindFileEntryCategory(card.category.value),
+                text=card.text,
+                source_memory_card_id=card.id,
+            )
+            await save_mindfile_entry(entry)
+            # Sync Mind File entry to Neo4j graph
+            try:
+                await graph_queries.sync_mindfile_entry(entry)
+            except Exception:
+                pass  # Graph sync is best-effort
+    except Exception:
+        pass  # Mind File promotion is best-effort
     return card
 
 
@@ -239,6 +280,16 @@ class RetrievedDoc(BaseModel):
     text: str
     score: float
 
+class GroundingScore(BaseModel):
+    """How well-grounded a response is in the knowledge base."""
+    overall: float  # 0.0–1.0 composite score
+    retrieval: float  # avg relevance of retrieved docs
+    coverage: float  # % of query concepts found in knowledge graph
+    diversity: float  # source diversity (0=one source, 1=many independent sources)
+    reasoning: float  # 0 or 1 — did the model reason?
+    label: str  # "High", "Medium", "Low", "Ungrounded"
+    detail: str  # human-readable summary
+
 class ChatResponse(BaseModel):
     session_id: str
     response: str
@@ -248,6 +299,8 @@ class ChatResponse(BaseModel):
     retrieved_context: List[RetrievedDoc] = []
     proposed_memories: List[MemoryCard] = []
     proposed_diagram: Optional[str] = None
+    grounding: Optional[GroundingScore] = None
+    validation: Optional[ValidationResult] = None
 
 
 def _split_thinking(raw: str) -> tuple[str, Optional[str]]:
@@ -280,6 +333,119 @@ def _split_thinking(raw: str) -> tuple[str, Optional[str]]:
         return answer, reasoning if reasoning else None
 
     return raw.strip(), None
+
+
+async def _compute_grounding(
+    query: str,
+    context_docs: list[dict],
+    has_reasoning: bool,
+) -> GroundingScore:
+    """Compute a grounding score for a chat response.
+
+    Dimensions:
+      retrieval  — average relevance score of retrieved docs (0-1)
+      coverage   — fraction of query concepts that exist in the knowledge graph
+      diversity  — how many independent sources contributed (0=none, 1=many)
+      reasoning  — binary: did the model engage in chain-of-thought?
+    """
+    # --- Retrieval quality ---
+    # Scores may be cosine similarity (0-1) or dot products (100+).
+    # Normalize to 0-1: use top score as reference. If scores are already
+    # in 0-1, use directly. If large, map relative to best score.
+    raw_scores = [d["score"] for d in context_docs if d.get("score")]
+    if raw_scores:
+        max_s = max(raw_scores)
+        if max_s > 1.5:
+            # Dot-product / cross-encoder scores — normalize relative to top
+            # Top score maps to 1.0, lower scores scale proportionally
+            scores = [s / max_s for s in raw_scores]
+        else:
+            scores = [max(0.0, min(1.0, s)) for s in raw_scores]
+        retrieval = sum(scores) / len(scores)
+    else:
+        retrieval = 0.0
+
+    # --- Coverage: check how many query concepts exist in Neo4j ---
+    coverage = 0.0
+    try:
+        from core.graph.concept_extractor import extract_concepts
+        query_concepts = extract_concepts(query, max_concepts=5)
+        if query_concepts:
+            from core.graph import queries as gq
+            found = 0
+            for concept_name in query_concepts:
+                results = await gq.search_nodes(concept_name, limit=1)
+                if results.nodes:
+                    found += 1
+            coverage = found / len(query_concepts)
+    except Exception:
+        coverage = 0.0
+
+    # --- Source diversity ---
+    # Count unique source types (memory cards vs seed docs)
+    unique_sources = set()
+    for d in context_docs:
+        doc_id = d.get("doc_id", "")
+        if doc_id.startswith("memory:"):
+            unique_sources.add(doc_id)  # each card is independent
+        else:
+            unique_sources.add("seed")  # all seed docs group together
+    n = len(unique_sources)
+    # Map to 0-1: 0 sources=0, 1 source=0.25, 2=0.5, 3+=0.75, 5+=1.0
+    diversity = min(n / 4.0, 1.0) if n > 0 else 0.0
+
+    # --- Reasoning ---
+    reasoning_score = 1.0 if has_reasoning else 0.0
+
+    # --- Composite ---
+    # Weighted: retrieval 40%, coverage 30%, diversity 20%, reasoning 10%
+    overall = (
+        0.40 * retrieval
+        + 0.30 * coverage
+        + 0.20 * diversity
+        + 0.10 * reasoning_score
+    )
+    overall = round(overall, 3)
+
+    # Label
+    if overall >= 0.7:
+        label = "High"
+    elif overall >= 0.4:
+        label = "Medium"
+    elif overall > 0.1:
+        label = "Low"
+    else:
+        label = "Ungrounded"
+
+    # Detail
+    parts = []
+    if retrieval > 0:
+        parts.append(f"retrieval relevance {retrieval:.0%}")
+    else:
+        parts.append("no relevant context found")
+    if coverage > 0:
+        parts.append(f"{coverage:.0%} concepts in knowledge graph")
+    else:
+        parts.append("no prior knowledge of these concepts")
+    if n > 1:
+        parts.append(f"{n} independent sources")
+    elif n == 1:
+        parts.append("single source")
+    if has_reasoning:
+        parts.append("model used chain-of-thought")
+
+    detail = "; ".join(parts)
+
+    return GroundingScore(
+        overall=overall,
+        retrieval=round(retrieval, 3),
+        coverage=round(coverage, 3),
+        diversity=round(diversity, 3),
+        reasoning=reasoning_score,
+        label=label,
+        detail=detail,
+    )
+
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest):
@@ -333,6 +499,17 @@ async def chat(req: ChatRequest):
         req.message, visible_answer, session_id, llm_response.get("model")
     )
 
+    # 7. Grounding score
+    grounding = None
+    try:
+        grounding = await _compute_grounding(
+            query=req.message,
+            context_docs=context_docs,
+            has_reasoning=reasoning is not None,
+        )
+    except Exception:
+        pass
+
     return ChatResponse(
         session_id=session_id,
         response=visible_answer,
@@ -341,6 +518,7 @@ async def chat(req: ChatRequest):
         processing_time=llm_response.get("processing_time"),
         retrieved_context=retrieved,
         proposed_memories=proposed_cards,
+        grounding=grounding,
     )
 
 
@@ -540,6 +718,18 @@ async def chat_stream(req: ChatRequest):
             for c in proposed_cards
         ]
 
+        # Grounding score (best-effort)
+        grounding_dict = None
+        try:
+            grounding = await _compute_grounding(
+                query=req.message,
+                context_docs=context_docs,
+                has_reasoning=reasoning is not None,
+            )
+            grounding_dict = grounding.model_dump()
+        except Exception:
+            pass
+
         # Send final done event with all metadata
         done_payload = {
             "session_id": session_id,
@@ -548,10 +738,44 @@ async def chat_stream(req: ChatRequest):
             "processing_time": elapsed,
             "retrieved_context": retrieved,
             "proposed_memories": proposed_dicts,
+            "grounding": grounding_dict,
         }
         yield f"event: done\ndata: {json_mod.dumps(done_payload)}\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+# ---------------------------------------------------------------------------
+# Response Validation endpoint
+# ---------------------------------------------------------------------------
+
+class ValidateRequest(BaseModel):
+    response_text: str
+    user_question: str
+    max_claims: int = 6
+
+
+@app.post("/validate", response_model=ValidationResult)
+async def validate_response(req: ValidateRequest):
+    """Validate an LLM response by extracting claims and checking evidence."""
+    from core.validation.claim_extractor import extract_claims
+    from core.validation.claim_validator import validate_claims
+
+    claims = await extract_claims(
+        response_text=req.response_text,
+        user_question=req.user_question,
+        max_claims=req.max_claims,
+    )
+
+    if not claims:
+        return ValidationResult(
+            claims=[],
+            summary_score=0.0,
+            label="Ungrounded",
+            detail="No verifiable claims extracted",
+        )
+
+    return await validate_claims(claims=claims, user_question=req.user_question)
 
 
 class DiagramRequest(BaseModel):
@@ -677,6 +901,11 @@ def sanitize_mermaid(code: str) -> str:
     - Quotes inside [...] labels: [Print "hello"] → [Print hello]
     - Parentheses inside [...] labels: [Text (V0)] → [Text - V0]
     - Parentheses inside {...} labels: {Text (V0)?} → {Text - V0?}
+    - Leading dash in rounded nodes: G(- End) → G(End)
+    - Pipe chars inside labels: [|A| / n] → [❘A❘ / n] (Mermaid uses | for edge labels)
+    - Duplicate node definitions on same line (DeepSeek quirk)
+    - Semicolons as line separators
+    - Redundant node ID suffixes in labels: A[Input - A] → A[Input]
     """
     # Remove truncated trailing lines (LLM hit max_tokens mid-node)
     lines = code.rstrip().split("\n")
@@ -690,6 +919,17 @@ def sanitize_mermaid(code: str) -> str:
         else:
             break
     code = "\n".join(lines)
+
+    # Split semicolon-separated statements into separate lines
+    # e.g. "A --> B; B --> C" → "A --> B\n    B --> C"
+    code = re.sub(r';\s*', '\n    ', code)
+
+    # Fix leading dash/hyphen inside node parentheses: G(- End) → G(End)
+    # Matches ID( - text) or ID(- text) patterns
+    code = re.sub(r'(\w)\(\s*-\s+', lambda m: f'{m.group(1)}(', code)
+
+    # Fix leading dash inside square brackets: A[- Text] → A[Text]
+    code = re.sub(r'(\w)\[\s*-\s+', lambda m: f'{m.group(1)}[', code)
 
     # Strip quotes inside [...] node labels (quotes break Mermaid parser)
     def strip_quotes_in_brackets(match: re.Match) -> str:
@@ -720,6 +960,37 @@ def sanitize_mermaid(code: str) -> str:
         lambda m: f"({m.group(1)}- {m.group(2)}{m.group(3)})",
         code,
     )
+
+    # Replace pipe chars inside node labels — Mermaid treats | as edge label delimiters
+    # e.g. AccuracyCalc[Calculate Accuracy = |A| / n] → AccuracyCalc[Calculate Accuracy = ❘A❘ / n]
+    def fix_pipes_in_label(m: re.Match) -> str:
+        nid = m.group(1)
+        content = m.group(2)
+        # Replace | inside the label with a visually similar Unicode char (U+2758)
+        content = content.replace("|", "❘")
+        return f"{nid}[{content}]"
+    code = re.sub(r'([A-Za-z_]\w*)\[([^\]]*\|[^\]]*)\]', fix_pipes_in_label, code)
+
+    # Same for {...} decision diamonds
+    def fix_pipes_in_diamond(m: re.Match) -> str:
+        nid = m.group(1)
+        content = m.group(2)
+        content = content.replace("|", "❘")
+        return f"{nid}{{{content}}}"
+    code = re.sub(r'([A-Za-z_]\w*)\{([^}]*\|[^}]*)\}', fix_pipes_in_diamond, code)
+
+    # Remove redundant node ID suffixes in labels: A[Input - A] → A[Input]
+    # DeepSeek often appends " - NodeID" to labels
+    def strip_id_suffix(m: re.Match) -> str:
+        nid = m.group(1)
+        opener = m.group(2)
+        label = m.group(3)
+        closer = m.group(4)
+        # Remove trailing " - NodeID" or " - NodeID?" pattern
+        cleaned = re.sub(r'\s*-\s*' + re.escape(nid) + r'\??\s*$', '', label, flags=re.IGNORECASE)
+        return f"{nid}{opener}{cleaned}{closer}"
+    code = re.sub(r'([A-Za-z_]\w*)(\[)([^\]]+)(\])', strip_id_suffix, code)
+    code = re.sub(r'([A-Za-z_]\w*)(\{)([^}]+)(\})', strip_id_suffix, code)
 
     # Fix bare (Text) nodes missing a node ID prefix
     # e.g. "    (Start) --> A[Step]" → "    _S([Start]) --> A[Step]"
@@ -811,7 +1082,390 @@ async def graph_seed():
     return await graph_queries.seed_demo_data()
 
 
+@app.get("/graph/session/{session_id}", response_model=GraphData)
+async def graph_session_subgraph(session_id: str):
+    """Return a focused subgraph around a chat session (1-2 hops)."""
+    return await graph_queries.get_session_subgraph(session_id=session_id)
+
+
+@app.get("/graph/scoped", response_model=GraphData)
+async def graph_scoped(
+    scope: str = Query(default="session", regex="^(session|question|artifact)$"),
+    session_id: Optional[str] = Query(default=None),
+    node_id: Optional[str] = Query(default=None),
+    depth: int = Query(default=1, ge=1, le=3),
+    view_mode: str = Query(default="provenance", regex="^(provenance|lineage|full)$"),
+):
+    """Return a scoped, predictable subgraph.
+
+    scope: session | question | artifact
+    view_mode: provenance | lineage | full
+    depth: 1-3 hops from the anchor node
+    """
+    return await graph_queries.get_scoped_graph(
+        scope=scope,
+        session_id=session_id,
+        node_id=node_id,
+        depth=depth,
+        view_mode=view_mode,
+    )
+
+
 @app.get("/graph/lineage/{node_id:path}", response_model=GraphData)
 async def graph_lineage(node_id: str):
     """Get artifact lineage chain for a node."""
     return await graph_queries.get_artifact_lineage(node_id=node_id)
+
+
+@app.post("/graph/from-diagram", response_model=GraphData)
+async def graph_from_diagram(req: DiagramToGraphRequest):
+    """Import a Mermaid diagram into the knowledge graph as Concept nodes + edges."""
+    return await graph_queries.import_diagram_to_graph(
+        diagram_code=req.diagram_code,
+        source=req.source or "diagram_import",
+    )
+
+
+@app.post("/graph/to-diagram")
+async def graph_to_diagram(req: GraphToDiagramRequest):
+    """Export graph nodes/edges as Mermaid flowchart syntax."""
+    ids = req.node_ids if req.node_ids is not None else None
+    code = await graph_queries.export_graph_to_mermaid(
+        node_ids=ids,
+        depth=req.depth,
+        layout=req.layout,
+    )
+    return {"code": code}
+
+
+# ============================================================================
+# Session Persistence Endpoints
+# ============================================================================
+
+class SaveSessionRequest(BaseModel):
+    session_id: str
+    title: str
+    messages: List[dict]
+
+
+@app.post("/sessions/save")
+async def save_chat_session(req: SaveSessionRequest):
+    """Save or update a chat session."""
+    messages = [SessionChatMessage.model_validate(m) for m in req.messages]
+    session = ChatSession(
+        id=req.session_id,
+        title=req.title,
+        messages=messages,
+    )
+    # If loading an existing session, preserve its created_at
+    existing = await load_session(req.session_id)
+    if existing:
+        session.created_at = existing.created_at
+    await save_session(session)
+    return {"status": "saved", "session_id": session.id, "message_count": len(messages)}
+
+
+@app.get("/sessions/{session_id}")
+async def get_chat_session(session_id: str):
+    """Load a chat session by ID."""
+    session = await load_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return session.model_dump(mode="json")
+
+
+@app.get("/sessions")
+async def get_sessions_list(limit: int = Query(default=50, ge=1, le=200)):
+    """List all sessions (summaries without full messages)."""
+    return await list_sessions(limit=limit)
+
+
+@app.delete("/sessions/{session_id}")
+async def delete_chat_session(session_id: str):
+    """Delete a chat session."""
+    deleted = await delete_session(session_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"status": "deleted", "session_id": session_id}
+
+
+@app.get("/sessions/{session_id}/export")
+async def export_session_markdown(session_id: str):
+    """Export a chat session as markdown."""
+    session = await load_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    lines: list[str] = []
+    lines.append(f"# {session.title}")
+    lines.append("")
+    lines.append(f"**Session:** {session.id}")
+    lines.append(f"**Created:** {session.created_at.strftime('%Y-%m-%d %H:%M UTC')}")
+    lines.append(f"**Messages:** {len(session.messages)}")
+    lines.append("")
+    lines.append("---")
+    lines.append("")
+
+    for msg in session.messages:
+        if msg.role == "user":
+            lines.append("## You")
+        else:
+            header = "## Assistant"
+            meta_parts = []
+            if msg.model:
+                meta_parts.append(msg.model)
+            if msg.processing_time:
+                meta_parts.append(f"{msg.processing_time:.1f}s")
+            if meta_parts:
+                header += f" ({' | '.join(meta_parts)})"
+            lines.append(header)
+
+        lines.append("")
+        lines.append(msg.text)
+        lines.append("")
+
+        # Include reasoning if present
+        if msg.reasoning:
+            lines.append("<details>")
+            lines.append("<summary>Reasoning (chain-of-thought)</summary>")
+            lines.append("")
+            lines.append(msg.reasoning)
+            lines.append("")
+            lines.append("</details>")
+            lines.append("")
+
+        # Include retrieved context
+        if msg.retrieved_context:
+            lines.append("<details>")
+            lines.append(f"<summary>Retrieved context ({len(msg.retrieved_context)} sources)</summary>")
+            lines.append("")
+            for doc in msg.retrieved_context:
+                doc_type = "Memory Card" if doc.get("doc_id", "").startswith("memory:") else "Seed Doc"
+                lines.append(f"- **{doc_type}** (score: {doc.get('score', 0):.3f}): {doc.get('text', '')}")
+            lines.append("")
+            lines.append("</details>")
+            lines.append("")
+
+        # Include proposed memories
+        if msg.proposed_memories:
+            lines.append(f"**Proposed memories ({len(msg.proposed_memories)}):**")
+            lines.append("")
+            for pm in msg.proposed_memories:
+                status = pm.get("approval", "pending")
+                icon = "+" if status == "approved" else "-" if status == "rejected" else "?"
+                lines.append(f"- [{icon}] {pm.get('text', '')} *({pm.get('category', '')})*")
+            lines.append("")
+
+        lines.append("---")
+        lines.append("")
+
+    lines.append(f"*Exported from Noesis on {session.updated_at.strftime('%Y-%m-%d %H:%M UTC')}*")
+
+    markdown = "\n".join(lines)
+    return {
+        "session_id": session_id,
+        "title": session.title,
+        "markdown": markdown,
+        "filename": f"{session.title.replace(' ', '_')[:40]}_{session_id}.md",
+    }
+
+
+# ============================================================================
+# Mind File Endpoints
+# ============================================================================
+
+@app.get("/mindfile")
+async def list_mindfile(
+    category: Optional[str] = Query(default=None),
+):
+    """List all Mind File entries, optionally filtered by category."""
+    cat = MindFileEntryCategory(category) if category else None
+    entries = await load_mindfile_entries(category=cat)
+    return [e.model_dump(mode="json") for e in entries]
+
+
+@app.get("/mindfile/stats")
+async def mindfile_stats():
+    """Return Mind File statistics."""
+    entries = await load_mindfile_entries()
+    by_category: dict[str, int] = {}
+    for e in entries:
+        by_category[e.category.value] = by_category.get(e.category.value, 0) + 1
+    first_date = min((e.created_at for e in entries), default=None)
+    latest_date = max((e.created_at for e in entries), default=None)
+    return {
+        "total": len(entries),
+        "by_category": by_category,
+        "first_entry_date": first_date.isoformat() if first_date else None,
+        "latest_entry_date": latest_date.isoformat() if latest_date else None,
+    }
+
+
+@app.get("/mindfile/export")
+async def export_mindfile():
+    """Export the full Mind File as structured markdown."""
+    entries = await load_mindfile_entries()
+    lines: list[str] = []
+    lines.append("# Mind File")
+    lines.append("")
+    lines.append(f"**Total entries:** {len(entries)}")
+    lines.append("")
+
+    # Group by category
+    grouped: dict[str, list[MindFileEntry]] = {}
+    for e in entries:
+        grouped.setdefault(e.category.value, []).append(e)
+
+    category_labels = {
+        "principles_values": "Principles & Values",
+        "cognitive_framing": "Cognitive Framing",
+        "decision_heuristics": "Decision Heuristics",
+        "preferences": "Preferences",
+        "vocabulary": "Vocabulary",
+    }
+
+    for cat_value, label in category_labels.items():
+        cat_entries = grouped.get(cat_value, [])
+        if not cat_entries:
+            continue
+        lines.append(f"## {label}")
+        lines.append("")
+        for e in cat_entries:
+            lines.append(f"- {e.text}")
+            if e.note:
+                lines.append(f"  - *Note: {e.note}*")
+            lines.append(f"  - Added: {e.created_at.strftime('%Y-%m-%d')}")
+            lines.append("")
+        lines.append("")
+
+    from datetime import datetime
+    lines.append(f"*Exported from Noesis on {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}*")
+
+    markdown = "\n".join(lines)
+    return {
+        "markdown": markdown,
+        "filename": "mind_file.md",
+        "entry_count": len(entries),
+    }
+
+
+@app.post("/mindfile/backfill")
+async def backfill_mindfile():
+    """One-time backfill: create Mind File entries for all approved cards that don't have one."""
+    approved = [c for c in MEMORY_CARDS.values() if c.approval == MemoryApproval.APPROVED]
+    created = 0
+    skipped = 0
+    for card in approved:
+        if await entry_exists_for_card(card.id):
+            skipped += 1
+            continue
+        entry = MindFileEntry(
+            category=MindFileEntryCategory(card.category.value),
+            text=card.text,
+            source_memory_card_id=card.id,
+        )
+        await save_mindfile_entry(entry)
+        try:
+            await graph_queries.sync_mindfile_entry(entry)
+        except Exception:
+            pass
+        created += 1
+    return {"created": created, "skipped": skipped, "total_approved": len(approved)}
+
+
+@app.post("/mindfile/sync-graph")
+async def sync_mindfile_to_graph():
+    """Sync all existing Mind File entries to Neo4j graph (MindFileEntry nodes + edges)."""
+    entries = await load_mindfile_entries()
+    synced = 0
+    errors = 0
+    for entry in entries:
+        try:
+            await graph_queries.sync_mindfile_entry(entry)
+            synced += 1
+        except Exception:
+            errors += 1
+    return {"synced": synced, "errors": errors, "total": len(entries)}
+
+
+# ============================================================================
+# Room 1: Timeline, Patterns, Cognitive Profile
+# (These MUST be declared before the /mindfile/{entry_id} wildcard route)
+# ============================================================================
+
+@app.get("/mindfile/timeline/{concept}")
+async def concept_timeline(concept: str):
+    """Return a chronological timeline of all artifacts related to a concept."""
+    events = await graph_queries.get_concept_timeline(concept)
+    return events
+
+
+@app.get("/mindfile/patterns")
+async def mindfile_patterns():
+    """Return concept co-occurrence patterns and top concepts."""
+    top_concepts = await graph_queries.get_top_concepts(limit=20)
+    co_occurrences = await graph_queries.get_concept_cooccurrences(limit=20)
+    category_trend = await graph_queries.get_category_trend()
+    return {
+        "top_concepts": top_concepts,
+        "co_occurrences": co_occurrences,
+        "category_trend": category_trend,
+    }
+
+
+@app.get("/mindfile/cognitive-profile")
+async def cognitive_profile():
+    """Return an aggregate cognitive style summary."""
+    entries = await load_mindfile_entries()
+    category_breakdown: dict[str, int] = {}
+    for e in entries:
+        category_breakdown[e.category.value] = category_breakdown.get(e.category.value, 0) + 1
+
+    top_concepts = await graph_queries.get_top_concepts(limit=10)
+    co_occurrences = await graph_queries.get_concept_cooccurrences(limit=10)
+    category_trend = await graph_queries.get_category_trend()
+
+    first_date = min((e.created_at for e in entries), default=None)
+    latest_date = max((e.created_at for e in entries), default=None)
+
+    return {
+        "total_entries": len(entries),
+        "category_breakdown": category_breakdown,
+        "top_concepts": top_concepts,
+        "co_occurrences": co_occurrences,
+        "category_trend": category_trend,
+        "first_entry_date": first_date.isoformat() if first_date else None,
+        "latest_entry_date": latest_date.isoformat() if latest_date else None,
+    }
+
+
+# Wildcard entry routes — MUST come after all /mindfile/... specific routes
+class UpdateNoteRequest(BaseModel):
+    note: str
+
+
+@app.get("/mindfile/{entry_id}")
+async def get_mindfile_entry(entry_id: str):
+    """Get a single Mind File entry."""
+    entry = await load_mindfile_entry(entry_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Entry not found")
+    return entry.model_dump(mode="json")
+
+
+@app.put("/mindfile/{entry_id}/note")
+async def update_mindfile_entry_note(entry_id: str, req: UpdateNoteRequest):
+    """Update the user annotation on a Mind File entry."""
+    entry = await update_mindfile_note(entry_id, req.note)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Entry not found")
+    return entry.model_dump(mode="json")
+
+
+@app.delete("/mindfile/{entry_id}")
+async def remove_mindfile_entry(entry_id: str):
+    """Remove an entry from the Mind File. The source memory card stays approved."""
+    deleted = await delete_mindfile_entry(entry_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Entry not found")
+    return {"status": "deleted", "entry_id": entry_id}

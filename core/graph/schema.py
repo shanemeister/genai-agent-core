@@ -8,6 +8,7 @@ SCHEMA_STATEMENTS = [
     "CREATE CONSTRAINT diagram_id IF NOT EXISTS FOR (d:Diagram) REQUIRE d.diagram_id IS UNIQUE",
     "CREATE CONSTRAINT session_id IF NOT EXISTS FOR (s:Session) REQUIRE s.session_id IS UNIQUE",
     "CREATE CONSTRAINT chatsession_id IF NOT EXISTS FOR (cs:ChatSession) REQUIRE cs.session_id IS UNIQUE",
+    "CREATE CONSTRAINT mindfileentry_id IF NOT EXISTS FOR (mf:MindFileEntry) REQUIRE mf.entry_id IS UNIQUE",
 ]
 
 

@@ -24,6 +24,8 @@ class MindFileEntry(BaseModel):
     category: MindFileEntryCategory
     text: str = Field(..., min_length=1)
 
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
     # Traceability
     source_memory_card_id: str
     note: Optional[str] = None

@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import os
+
 from core.rag.embeddings import embed_text
 from core.rag.vector_store import VectorStore
 
 _STORE = VectorStore()
 _SEEDED = False
 _INDEXED_CARD_IDS: set[str] = set()
+
+# Set NOESIS_USE_RERANKER=0 to disable reranking (e.g. if model not downloaded)
+_USE_RERANKER = os.getenv("NOESIS_USE_RERANKER", "1") == "1"
 
 
 def _seed_store() -> None:
@@ -38,6 +43,23 @@ def index_memory_cards(cards) -> int:
 
 
 def retrieve_context(query: str, k: int = 5) -> list[dict]:
+    """Retrieve relevant context using vector search + optional reranking.
+
+    Pipeline:
+      1. Vector search: retrieve top 15 candidates by cosine similarity
+      2. Rerank: cross-encoder reranks candidates, returns top k
+    """
     _seed_store()
     query_embedding = embed_text(query)
-    return _STORE.search(query_embedding, k=k)
+
+    if _USE_RERANKER:
+        # Retrieve more candidates than needed, then rerank
+        candidates = _STORE.search(query_embedding, k=max(k * 3, 15))
+        try:
+            from core.rag.reranker import rerank
+            return rerank(query, candidates, top_k=k)
+        except Exception as e:
+            print(f"[retriever] Reranker failed, falling back to vector search: {e}")
+            return candidates[:k]
+    else:
+        return _STORE.search(query_embedding, k=k)
