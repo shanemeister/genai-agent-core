@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 
 import httpx
 
-LLM_URL = "http://127.0.0.1:8080/ask"
+from core.config import settings
+
+log = logging.getLogger("noesis.validation")
 
 
 async def extract_claims(
@@ -45,11 +48,16 @@ Return ONLY the JSON array, nothing else."""
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(
-                LLM_URL,
-                json={"question": prompt, "max_tokens": 600, "temperature": 0.2},
+                f"{settings.vllm_base_url}/v1/chat/completions",
+                json={
+                    "model": settings.vllm_model_name,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "max_tokens": 600,
+                    "temperature": 0.2,
+                },
             )
             resp.raise_for_status()
-            answer = resp.json().get("answer", "")
+            answer = resp.json()["choices"][0]["message"]["content"].strip()
 
         # Strip <think> reasoning blocks
         answer = re.sub(r"<think>.*?</think>", "", answer, flags=re.DOTALL)
@@ -79,7 +87,8 @@ Return ONLY the JSON array, nothing else."""
 
         return result if result else _fallback_split(response_text, max_claims)
 
-    except Exception:
+    except Exception as e:
+        log.info("LLM claim extraction unavailable, using fallback: %s", e)
         return _fallback_split(response_text, max_claims)
 
 

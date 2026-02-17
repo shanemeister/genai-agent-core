@@ -1,20 +1,19 @@
 from __future__ import annotations
 
-import os
+import logging
 from functools import lru_cache
 from sentence_transformers import SentenceTransformer
 
-# Configurable via environment variable. Options:
-#   "nomic-ai/nomic-embed-text-v1.5"  — 768d, 8192 token context, best quality
-#   "all-MiniLM-L6-v2"                — 384d, 512 token context, fastest
-EMBED_MODEL = os.getenv("NOESIS_EMBED_MODEL", "nomic-ai/nomic-embed-text-v1.5")
+from core.config import settings
+
+log = logging.getLogger("noesis.rag")
 
 
 @lru_cache(maxsize=1)
 def _get_model() -> SentenceTransformer:
     """Load the embedding model once and cache it."""
-    model = SentenceTransformer(EMBED_MODEL, trust_remote_code=True)
-    print(f"[embeddings] Loaded {EMBED_MODEL} ({model.get_sentence_embedding_dimension()}d)")
+    model = SentenceTransformer(settings.noesis_embed_model, trust_remote_code=True)
+    log.info("Loaded %s (%dd)", settings.noesis_embed_model, model.get_sentence_embedding_dimension())
     return model
 
 

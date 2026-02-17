@@ -1,14 +1,10 @@
 from __future__ import annotations
 
-import os
 from contextlib import asynccontextmanager
 
 from neo4j import AsyncGraphDatabase, AsyncDriver
 
-NEO4J_URI = os.getenv("NEO4J_URI", "bolt://127.0.0.1:7687")
-NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
-NEO4J_PASS = os.getenv("NEO4J_PASS", "ZGRkXDGr9wcRbIs6yLg9yPwpPnDNYKzp")
-NEO4J_DATABASE = os.getenv("NEO4J_DATABASE", "noesis")
+from core.config import settings
 
 _driver: AsyncDriver | None = None
 
@@ -17,7 +13,7 @@ async def init_driver() -> AsyncDriver:
     global _driver
     if _driver is None:
         _driver = AsyncGraphDatabase.driver(
-            NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASS)
+            settings.neo4j_uri, auth=(settings.neo4j_user, settings.neo4j_password)
         )
         await _driver.verify_connectivity()
     return _driver
@@ -33,7 +29,7 @@ async def close_driver() -> None:
 @asynccontextmanager
 async def get_session():
     driver = await init_driver()
-    session = driver.session(database=NEO4J_DATABASE)
+    session = driver.session(database=settings.neo4j_database)
     try:
         yield session
     finally:

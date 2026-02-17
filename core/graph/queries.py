@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 import re
 from typing import Optional
 
 from core.graph.models import GraphData, GraphEdge, GraphNode
 from core.graph.neo4j_client import get_session
+
+log = logging.getLogger("noesis.graph")
 
 # Allowed relationship types — Neo4j doesn't support parameterized rel types,
 # so we must validate against a whitelist to prevent Cypher injection.
@@ -298,8 +301,8 @@ async def sync_memory_card(card) -> GraphNode:
                     concept_name=concept_name.strip().lower(),
                     card_id=card.id,
                 )
-    except Exception:
-        pass  # Concept extraction is best-effort
+    except Exception as e:
+        log.warning("Concept extraction failed for card %s: %s", card.id, e)
 
     return node
 
@@ -385,8 +388,8 @@ async def record_chat_session(
                     concept_name=concept_name.strip().lower(),
                     session_id=session_id,
                 )
-    except Exception:
-        pass
+    except Exception as e:
+        log.warning("Concept extraction failed for chat session %s: %s", session_id, e)
 
     return node
 
@@ -448,8 +451,8 @@ async def record_diagram_lineage(
                     concept_name=concept_name,
                     diagram_id=diagram_id,
                 )
-    except Exception:
-        pass  # Concept extraction from diagrams is best-effort
+    except Exception as e:
+        log.warning("Concept extraction failed for diagram %s: %s", diagram_id, e)
 
     return node
 

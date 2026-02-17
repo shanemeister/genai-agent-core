@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 import httpx
 import re
 
-LLM_URL = "http://127.0.0.1:8080/ask"
+from core.config import settings
+
+log = logging.getLogger("noesis.graph")
 
 
 async def extract_concepts(text: str, max_concepts: int = 5) -> list[str]:
@@ -22,14 +25,20 @@ async def extract_concepts(text: str, max_concepts: int = 5) -> list[str]:
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
-                LLM_URL,
-                json={"prompt": prompt, "max_tokens": 120, "temperature": 0.2},
+                f"{settings.vllm_base_url}/v1/chat/completions",
+                json={
+                    "model": settings.vllm_model_name,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "max_tokens": 120,
+                    "temperature": 0.2,
+                },
             )
             resp.raise_for_status()
-            answer = resp.json().get("response", "")
+            answer = resp.json()["choices"][0]["message"]["content"].strip()
             concepts = [c.strip().lower() for c in answer.split(",") if c.strip()]
             return concepts[:max_concepts]
-    except Exception:
+    except Exception as e:
+        log.info("LLM concept extraction unavailable, using fallback: %s", e)
         return _fallback_extract(text, max_concepts)
 
 

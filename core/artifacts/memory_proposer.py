@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import json
+import logging
+import re
+
 import httpx
 
-LLM_URL = "http://127.0.0.1:8080/ask"
+from core.config import settings
+
+log = logging.getLogger("noesis.memory")
 
 
 async def propose_memories(
@@ -39,13 +44,23 @@ If nothing is worth remembering, return an empty array: []
 Return ONLY the JSON array, nothing else."""
 
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(
-                LLM_URL,
-                json={"question": prompt, "max_tokens": 500, "temperature": 0.3},
+                f"{settings.vllm_base_url}/v1/chat/completions",
+                json={
+                    "model": settings.vllm_model_name,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "max_tokens": 500,
+                    "temperature": 0.3,
+                },
             )
             resp.raise_for_status()
-            answer = resp.json().get("answer", "")
+            answer = resp.json()["choices"][0]["message"]["content"].strip()
+
+        # Strip <think> reasoning blocks (DeepSeek-R1)
+        answer = re.sub(r"<think>.*?</think>", "", answer, flags=re.DOTALL)
+        if "</think>" in answer:
+            answer = answer.split("</think>", 1)[-1]
 
         # Strip markdown fences if present
         answer = answer.strip()
@@ -83,5 +98,6 @@ Return ONLY the JSON array, nothing else."""
                 })
         return result
 
-    except Exception:
+    except Exception as e:
+        log.info("Memory proposal LLM call failed: %s", e)
         return []

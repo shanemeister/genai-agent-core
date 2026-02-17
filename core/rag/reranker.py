@@ -1,18 +1,19 @@
 from __future__ import annotations
 
-import os
+import logging
 from functools import lru_cache
 from sentence_transformers import CrossEncoder
 
-# Configurable via environment variable
-RERANKER_MODEL = os.getenv("NOESIS_RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
+from core.config import settings
+
+log = logging.getLogger("noesis.rag")
 
 
 @lru_cache(maxsize=1)
 def _get_reranker() -> CrossEncoder:
     """Load the reranker model once and cache it."""
-    model = CrossEncoder(RERANKER_MODEL)
-    print(f"[reranker] Loaded {RERANKER_MODEL}")
+    model = CrossEncoder(settings.noesis_reranker_model)
+    log.info("Loaded reranker %s", settings.noesis_reranker_model)
     return model
 
 

@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import logging
+
 from core.validation.models import (
     ClaimEvidence,
     ClaimStatus,
     ValidatedClaim,
     ValidationResult,
 )
+
+log = logging.getLogger("noesis.validation")
 
 # Thresholds for evidence classification
 SUPPORT_THRESHOLD = 0.5
@@ -32,7 +36,7 @@ async def validate_claims(
         evidence_list: list[ClaimEvidence] = []
         best_score = 0.0
         try:
-            raw_docs = retrieve_context(claim_text, k=3)
+            raw_docs = await retrieve_context(claim_text, k=3)
             for doc in raw_docs:
                 score = doc.get("rerank_score", doc.get("score", 0.0))
                 norm_score = _normalize_score(score, raw_docs)
@@ -50,8 +54,8 @@ async def validate_claims(
                         )
                     )
                     best_score = max(best_score, norm_score)
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning("Evidence retrieval failed for claim: %s", e)
 
         # --- Step 2: Graph concept coverage ---
         concepts_found: list[str] = []
@@ -67,8 +71,8 @@ async def validate_claims(
                     concepts_found.append(concept_name)
                 else:
                     concepts_missing.append(concept_name)
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning("Graph concept coverage check failed for claim: %s", e)
 
         # --- Step 3: Determine status ---
         status, confidence = _compute_status(
