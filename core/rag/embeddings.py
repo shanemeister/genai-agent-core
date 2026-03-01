@@ -11,9 +11,14 @@ log = logging.getLogger("noesis.rag")
 
 @lru_cache(maxsize=1)
 def _get_model() -> SentenceTransformer:
-    """Load the embedding model once and cache it."""
-    model = SentenceTransformer(settings.noesis_embed_model, trust_remote_code=True)
-    log.info("Loaded %s (%dd)", settings.noesis_embed_model, model.get_sentence_embedding_dimension())
+    """Load the embedding model once and cache it.
+
+    Forces CPU device since GPUs are dedicated to vLLM inference.
+    """
+    model = SentenceTransformer(
+        settings.noesis_embed_model, trust_remote_code=True, device="cpu"
+    )
+    log.info("Loaded %s (%dd) on CPU", settings.noesis_embed_model, model.get_sentence_embedding_dimension())
     return model
 
 
@@ -27,6 +32,29 @@ def embed_text(text: str) -> list[float]:
     model = _get_model()
     embedding = model.encode(text, convert_to_numpy=True)
     return embedding.tolist()
+
+
+def embed_texts_batch(texts: list[str], batch_size: int = 256) -> list[list[float]]:
+    """Batch-embed multiple texts at once.
+
+    Uses SentenceTransformer's native batch processing for much higher
+    throughput than calling embed_text() in a loop.
+
+    Args:
+        texts: List of strings to embed.
+        batch_size: Internal batch size for the model encoder.
+
+    Returns:
+        List of embedding vectors (same order as input texts).
+    """
+    model = _get_model()
+    embeddings = model.encode(
+        texts,
+        batch_size=batch_size,
+        convert_to_numpy=True,
+        show_progress_bar=False,
+    )
+    return embeddings.tolist()
 
 
 def get_embedding_dim() -> int:

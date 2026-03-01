@@ -18,7 +18,7 @@ set -euo pipefail
 MODEL_DIR="./models/deepseek-r1-70b-w4a16"
 PORT=8081
 TP_SIZE=2                  # tensor-parallel across 2x A6000
-MAX_MODEL_LEN=4096         # conservative context; raise if needed
+MAX_MODEL_LEN=16384        # 16K context — supports clinical notes + RAG context
 GPU_UTIL=0.90              # 90% of 98GB = ~88GB usable
 
 echo "=== Noesis vLLM Server ==="

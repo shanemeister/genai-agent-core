@@ -4,12 +4,19 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import io
 import logging
+import re
 import shutil
+import time
 from pathlib import Path
 from typing import Optional
 
+import httpx
 from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Form
+from fastapi.responses import JSONResponse
+
+from core.config import settings
 
 from core.artifacts.document import Document, DocumentChunk, DocumentType, DocumentStatus
 from core.artifacts.storage_documents_pg import (
@@ -319,6 +326,135 @@ async def caption_image(file: UploadFile = File(...)):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Vision processing error: {str(e)}")
+
+
+# ---------------------------------------------------------------------------
+# FoxDigest compatibility — document summarization via LLM
+# ---------------------------------------------------------------------------
+
+def _extract_text_from_file(filename: str, content: bytes) -> str:
+    """Extract text from an uploaded document for summarization."""
+    ext = filename.lower()
+
+    if ext.endswith(".docx"):
+        from docx import Document as DocxDocument
+        doc = DocxDocument(io.BytesIO(content))
+        text = "\n".join(para.text for para in doc.paragraphs)
+    elif ext.endswith(".pdf"):
+        import fitz
+        with fitz.open(stream=content, filetype="pdf") as pdf:
+            text = "\n".join(page.get_text() for page in pdf)
+    elif ext.endswith((".txt", ".md")):
+        text = content.decode(errors="ignore")
+    elif ext.endswith((".png", ".jpg", ".jpeg")):
+        from PIL import Image
+        import pytesseract
+        image = Image.open(io.BytesIO(content))
+        text = pytesseract.image_to_string(image, lang="eng")
+    else:
+        raise HTTPException(status_code=400, detail="Unsupported file format.")
+
+    if len(text.strip()) < 20:
+        raise HTTPException(status_code=422, detail="Unable to extract usable text from document.")
+
+    return text.strip()
+
+
+def _split_thinking(raw: str) -> str:
+    """Strip <think> reasoning from DeepSeek-R1 output, return visible answer."""
+    if "</think>" in raw:
+        parts = raw.split("</think>", 1)
+        return (parts[1].strip() if len(parts) > 1 else "")
+    return raw.strip()
+
+
+@router.post("/process-document")
+async def process_document(file: UploadFile = File(...)):
+    """Summarize an uploaded document using the local LLM.
+
+    Compatible with FoxDigest's localLLM.js client.
+    Accepts: PDF, DOCX, TXT, MD, PNG, JPG.
+    Returns: {summary, key_points, processing_time, model_used}
+    """
+    try:
+        start = time.time()
+        content = await file.read()
+
+        if len(content) > 10 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="File too large (max 10MB)")
+
+        extracted_text = _extract_text_from_file(file.filename, content)
+
+        # Truncate to fit context window
+        max_chars = 12000
+        truncated_text = extracted_text[:max_chars]
+
+        # Adjust summary length based on input
+        if len(truncated_text) < 1000:
+            length_instruction = "in under 75 words"
+        elif len(truncated_text) < 3000:
+            length_instruction = "in 100-150 words"
+        else:
+            length_instruction = "in 200-250 words"
+
+        prompt = (
+            f"You are a professional summarization assistant. Summarize the following document clearly "
+            f"and concisely, {length_instruction}, using Markdown.\n\n"
+            "Use this format:\n\n"
+            "**Overview**\n[Brief description]\n\n"
+            "**Details**\n[2-4 sentence explanation]\n\n"
+            "**Outcome**\n[Optional: result, insight, or next steps.]\n\n"
+            "### Key Points\n"
+            "- [Point 1]\n- [Point 2]\n- [Point 3]\n\n"
+            "Do not explain your response. Return only formatted markdown.\n\n"
+            f"Document:\n{truncated_text}"
+        )
+
+        payload = {
+            "model": settings.vllm_model_name,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.3,
+            "max_tokens": 1000,
+        }
+
+        async with httpx.AsyncClient(timeout=settings.llm_timeout) as client:
+            resp = await client.post(
+                f"{settings.vllm_base_url}/v1/chat/completions",
+                json=payload,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+        raw_answer = data["choices"][0]["message"]["content"].strip()
+        visible_answer = _split_thinking(raw_answer)
+
+        # Extract key points
+        key_points_match = re.search(
+            r"(?:#{1,3}\s*)?(?:\*\*)?Key Points(?:\*\*)?\s*\n((?:- .+\n?)+)",
+            visible_answer,
+        )
+        key_points = []
+        if key_points_match:
+            key_points = [
+                line.strip("- ").strip()
+                for line in key_points_match.group(1).splitlines()
+                if line.strip()
+            ]
+
+        elapsed = round(time.time() - start, 2)
+
+        return JSONResponse(content={
+            "summary": visible_answer,
+            "key_points": key_points,
+            "processing_time": elapsed,
+            "model_used": "DeepSeek-R1-70B",
+        })
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error("process-document failed: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Processing error: {str(e)}")
 
 
 # ---------------------------------------------------------------------------

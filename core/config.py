@@ -58,9 +58,11 @@ class Settings(BaseSettings):
     chunk_overlap: int = 500
     max_upload_size_mb: int = 50
 
-    # ── Ontology (future — Level 2/3 validation) ───────────────
-    ontology_import_batch_size: int = 500
+    # ── Ontology ─────────────────────────────────────────────────
+    ontology_import_batch_size: int = 1000
+    ontology_embed_batch_size: int = 256
     coverage_threshold: float = 0.6
+    snomed_rf2_dir: str = "/home/exx/data_sdb/ontologies/snomed/SnomedCT_ManagedServiceUS_PRODUCTION_US1000124_20250901T120000Z/Snapshot"
 
     model_config = {
         "env_file": ".env",

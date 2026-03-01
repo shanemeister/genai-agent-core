@@ -107,6 +107,40 @@ class PgVectorStore:
         )
         return row is not None
 
+    async def add_batch(self, items: list[dict]) -> int:
+        """Batch upsert embeddings for higher throughput.
+
+        Each item must have keys: doc_id, vector, text, metadata.
+        Uses a single connection with prepared statements.
+        """
+        if not items:
+            return 0
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            stmt = await conn.prepare(
+                """
+                INSERT INTO embeddings (doc_id, embedding, text, metadata, source_type)
+                VALUES ($1, $2, $3, $4::jsonb, $5)
+                ON CONFLICT (doc_id) DO UPDATE SET
+                    embedding = EXCLUDED.embedding,
+                    text = EXCLUDED.text,
+                    metadata = EXCLUDED.metadata,
+                    source_type = EXCLUDED.source_type
+                """
+            )
+            for item in items:
+                meta = item.get("metadata") or {}
+                source_type = meta.get("source_type", "unknown")
+                embedding = np.array(item["vector"], dtype=np.float32)
+                await stmt.fetch(
+                    item["doc_id"],
+                    embedding,
+                    item["text"],
+                    json.dumps(meta),
+                    source_type,
+                )
+        return len(items)
+
     async def count(self, source_type: str | None = None) -> int:
         """Count embeddings, optionally filtered by source_type."""
         pool = await get_pool()
