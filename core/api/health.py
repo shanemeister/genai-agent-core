@@ -59,12 +59,12 @@ async def check_neo4j() -> tuple[bool, str]:
         return False, str(e)
 
 
-async def check_vllm() -> tuple[bool, str]:
-    """Check vLLM is reachable via its /v1/models endpoint (no GPU load)."""
+async def check_llm() -> tuple[bool, str]:
+    """Check LLM inference server is reachable via /v1/models (no GPU load)."""
     try:
         t0 = time.monotonic()
         async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(f"{settings.vllm_base_url}/v1/models")
+            resp = await client.get(f"{settings.llm_base_url}/v1/models")
             ms = round((time.monotonic() - t0) * 1000)
             if resp.status_code == 200:
                 data = resp.json()
@@ -85,7 +85,7 @@ async def run_all_checks() -> dict:
                 "postgres": {"ok": bool, "detail": str},
                 "pgvector": {"ok": bool, "detail": str},
                 "neo4j":    {"ok": bool, "detail": str},
-                "vllm":     {"ok": bool, "detail": str},
+                "llm":      {"ok": bool, "detail": str},
             }
         }
 
@@ -96,13 +96,13 @@ async def run_all_checks() -> dict:
     pg_ok, pg_detail = await check_postgres()
     pgv_ok, pgv_detail = await check_pgvector()
     neo_ok, neo_detail = await check_neo4j()
-    vllm_ok, vllm_detail = await check_vllm()
+    llm_ok, llm_detail = await check_llm()
 
     checks = {
         "postgres": {"ok": pg_ok, "detail": pg_detail},
         "pgvector": {"ok": pgv_ok, "detail": pgv_detail},
         "neo4j": {"ok": neo_ok, "detail": neo_detail},
-        "vllm": {"ok": vllm_ok, "detail": vllm_detail},
+        "llm": {"ok": llm_ok, "detail": llm_detail},
     }
 
     all_ok = all(c["ok"] for c in checks.values())

@@ -411,7 +411,7 @@ async def process_document(file: UploadFile = File(...)):
         )
 
         payload = {
-            "model": settings.vllm_model_name,
+            "model": settings.llm_model_name,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.3,
             "max_tokens": 1000,
@@ -419,7 +419,7 @@ async def process_document(file: UploadFile = File(...)):
 
         async with httpx.AsyncClient(timeout=settings.llm_timeout) as client:
             resp = await client.post(
-                f"{settings.vllm_base_url}/v1/chat/completions",
+                f"{settings.llm_base_url}/v1/chat/completions",
                 json=payload,
             )
             resp.raise_for_status()
@@ -447,7 +447,7 @@ async def process_document(file: UploadFile = File(...)):
             "summary": visible_answer,
             "key_points": key_points,
             "processing_time": elapsed,
-            "model_used": "DeepSeek-R1-70B",
+            "model_used": settings.llm_model_display,
         })
 
     except HTTPException:

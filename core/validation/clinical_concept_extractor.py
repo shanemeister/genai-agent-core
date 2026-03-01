@@ -1,6 +1,6 @@
 """Extract structured clinical concepts from clinical note text.
 
-Uses DeepSeek-R1 via vLLM to identify conditions, symptoms, procedures,
+Uses local LLM (Ollama/vLLM) to identify conditions, symptoms, procedures,
 medications, body sites, and lab values — with negation and qualifier detection.
 
 Falls back to regex-based extraction if LLM is unavailable.
@@ -12,9 +12,7 @@ import json
 import logging
 import re
 
-import httpx
-
-from core.config import settings
+from core.api.shared import ask_llm_nothink, strip_llm_wrapper
 from core.validation.clinical_models import ClinicalConcept, ConceptCategory
 
 log = logging.getLogger("noesis.validation")
@@ -26,8 +24,9 @@ async def extract_clinical_concepts(
 ) -> list[ClinicalConcept]:
     """Extract clinical concepts from a clinical note.
 
-    Uses the local LLM to parse clinical language, handling negation,
-    qualifiers, and categorization. Falls back to regex if LLM unavailable.
+    Uses the local LLM (with thinking disabled) to parse clinical language,
+    handling negation, qualifiers, and categorization. Falls back to regex
+    if LLM unavailable.
 
     Args:
         note_text: Raw clinical note text.
@@ -68,35 +67,14 @@ Return ONLY a JSON array. Example:
 Return ONLY the JSON array, nothing else."""
 
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(
-                f"{settings.vllm_base_url}/v1/chat/completions",
-                json={
-                    "model": settings.vllm_model_name,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "max_tokens": 1500,
-                    "temperature": 0.1,
-                },
-            )
-            resp.raise_for_status()
-            answer = resp.json()["choices"][0]["message"]["content"].strip()
+        answer = await ask_llm_nothink(prompt, temperature=0.1, max_tokens=2000, timeout=90.0)
+        answer = strip_llm_wrapper(answer)
 
-        # Strip <think> reasoning blocks (DeepSeek-R1)
-        answer = re.sub(r"<think>.*?</think>", "", answer, flags=re.DOTALL)
-        if "</think>" in answer:
-            answer = answer.split("</think>", 1)[-1]
-
-        # Strip markdown code fences
-        answer = answer.strip()
-        if answer.startswith("```"):
-            lines = answer.split("\n")
-            if lines[-1].strip() == "```":
-                lines = lines[1:-1]
-            else:
-                lines = lines[1:]
-            if lines and lines[0].strip().lower() in ("json",):
-                lines = lines[1:]
-            answer = "\n".join(lines).strip()
+        # Try to extract JSON array if answer has extra text around it
+        if not answer.startswith("["):
+            bracket_match = re.search(r"\[.*\]", answer, re.DOTALL)
+            if bracket_match:
+                answer = bracket_match.group(0)
 
         raw = json.loads(answer)
         if not isinstance(raw, list):

@@ -92,9 +92,9 @@ class DiagramRequest(BaseModel):
 def _split_thinking(raw: str) -> tuple[str, Optional[str]]:
     """Separate reasoning from the visible answer.
 
-    DeepSeek-R1 models emit chain-of-thought in several formats:
-    1. <think>reasoning</think>answer  (full tags)
-    2. reasoning</think>answer  (opening tag stripped by vLLM chat template)
+    Thinking models (DeepSeek-R1, Qwen3.5) may emit chain-of-thought
+    in <think> tags when served via vLLM. Ollama separates thinking
+    into a different response field, so content arrives clean.
     Returns (answer, reasoning) where reasoning may be None.
     """
     # Case 1: Full <think>...</think> tags
@@ -463,11 +463,12 @@ async def chat_stream(req: ChatRequest):
         yield f"event: status\ndata: {json_mod.dumps({'phase': 'retrieving'})}\n\n"
 
         full_text = ""
+        reasoning_text = ""
         answer_started = False
         sent_thinking_status = False
 
-        vllm_payload = {
-            "model": settings.vllm_model_name,
+        llm_payload = {
+            "model": settings.llm_model_name,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": req.temperature,
             "max_tokens": req.max_tokens,
@@ -478,8 +479,8 @@ async def chat_stream(req: ChatRequest):
             async with httpx.AsyncClient(timeout=settings.llm_timeout) as client:
                 async with client.stream(
                     "POST",
-                    f"{settings.vllm_base_url}/v1/chat/completions",
-                    json=vllm_payload,
+                    f"{settings.llm_base_url}/v1/chat/completions",
+                    json=llm_payload,
                 ) as resp:
                     resp.raise_for_status()
                     async for line in resp.aiter_lines():
@@ -491,9 +492,25 @@ async def chat_stream(req: ChatRequest):
 
                         chunk = json_mod.loads(data_str)
                         delta = chunk["choices"][0].get("delta", {})
+
+                        # Ollama streams thinking in reasoning_content
+                        reasoning_token = delta.get("reasoning_content", "")
+                        if reasoning_token:
+                            reasoning_text += reasoning_token
+                            if not sent_thinking_status:
+                                sent_thinking_status = True
+                                yield f"event: status\ndata: {json_mod.dumps({'phase': 'thinking'})}\n\n"
+                            continue
+
                         token = delta.get("content", "")
                         if not token:
                             continue
+
+                        # If we were in thinking phase and now get content,
+                        # transition to answering
+                        if sent_thinking_status and not answer_started:
+                            answer_started = True
+                            yield f"event: status\ndata: {json_mod.dumps({'phase': 'answering'})}\n\n"
 
                         full_text += token
 
@@ -501,11 +518,14 @@ async def chat_stream(req: ChatRequest):
                             yield f"event: token\ndata: {json_mod.dumps({'token': token})}\n\n"
                             continue
 
+                        # vLLM-style: <think> tags inline in content
                         if "</think>" in full_text:
                             answer_started = True
                             yield f"event: status\ndata: {json_mod.dumps({'phase': 'answering'})}\n\n"
                             parts = full_text.split("</think>", 1)
+                            reasoning_text = parts[0].replace("<think>", "").strip()
                             after = parts[1].lstrip() if len(parts) > 1 else ""
+                            full_text = after
                             if after:
                                 yield f"event: token\ndata: {json_mod.dumps({'token': after})}\n\n"
                             continue
@@ -520,7 +540,12 @@ async def chat_stream(req: ChatRequest):
 
         # Post-processing
         elapsed = round(time.time() - start, 2)
-        visible_answer, reasoning = _split_thinking(full_text)
+        # Use pre-separated reasoning if available (Ollama), else parse tags (vLLM)
+        if reasoning_text:
+            visible_answer = full_text.strip()
+            reasoning = reasoning_text.strip()
+        else:
+            visible_answer, reasoning = _split_thinking(full_text)
         session_id = f"chat-{uuid.uuid4().hex[:12]}"
 
         # Neo4j lineage (best-effort)
@@ -529,7 +554,7 @@ async def chat_stream(req: ChatRequest):
                 session_id=session_id,
                 user_message=req.message,
                 assistant_response=visible_answer,
-                model="DeepSeek-R1-70B",
+                model=settings.llm_model_display,
                 processing_time=elapsed,
                 retrieved_doc_ids=[d["doc_id"] for d in context_docs],
             )
@@ -538,7 +563,7 @@ async def chat_stream(req: ChatRequest):
 
         # Memory proposals (best-effort)
         proposed_cards = await _propose_memories_for_session(
-            req.message, visible_answer, session_id, "DeepSeek-R1-70B"
+            req.message, visible_answer, session_id, settings.llm_model_display
         )
         proposed_dicts = [
             {
@@ -566,7 +591,7 @@ async def chat_stream(req: ChatRequest):
         done_payload = {
             "session_id": session_id,
             "reasoning": reasoning,
-            "model": "DeepSeek-R1-70B",
+            "model": settings.llm_model_display,
             "processing_time": elapsed,
             "retrieved_context": retrieved,
             "proposed_memories": proposed_dicts,

@@ -15,7 +15,7 @@ class TestConfig:
         assert settings.postgres_host
         assert settings.postgres_port > 0
         assert settings.neo4j_uri.startswith("bolt://")
-        assert settings.vllm_base_url.startswith("http")
+        assert settings.llm_base_url.startswith("http")
 
     def test_llm_timeout_is_positive(self):
         assert settings.llm_timeout > 0

@@ -38,10 +38,12 @@ class Settings(BaseSettings):
     neo4j_password: str = "ZGRkXDGr9wcRbIs6yLg9yPwpPnDNYKzp"
     neo4j_database: str = "noesis"
 
-    # ── vLLM ────────────────────────────────────────────────────
-    vllm_base_url: str = "http://127.0.0.1:8081"
-    vllm_model_name: str = "./models/deepseek-r1-70b-w4a16"
+    # ── LLM Inference (Ollama or vLLM — both OpenAI-compatible) ─
+    llm_base_url: str = "http://127.0.0.1:11434"
+    llm_model_name: str = "axiom-primary"
+    llm_model_display: str = "Qwen3.5-35B-A3B"
     llm_timeout: float = 180.0
+
 
     # ── Embedding Model ─────────────────────────────────────────
     noesis_embed_model: str = "nomic-ai/nomic-embed-text-v1.5"

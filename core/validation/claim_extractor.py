@@ -4,9 +4,7 @@ import json
 import logging
 import re
 
-import httpx
-
-from core.config import settings
+from core.api.shared import ask_llm_nothink, strip_llm_wrapper
 
 log = logging.getLogger("noesis.validation")
 
@@ -46,35 +44,14 @@ Return a JSON array of strings. Example:
 Return ONLY the JSON array, nothing else."""
 
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(
-                f"{settings.vllm_base_url}/v1/chat/completions",
-                json={
-                    "model": settings.vllm_model_name,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "max_tokens": 600,
-                    "temperature": 0.2,
-                },
-            )
-            resp.raise_for_status()
-            answer = resp.json()["choices"][0]["message"]["content"].strip()
+        answer = await ask_llm_nothink(prompt, temperature=0.2, max_tokens=600, timeout=60.0)
+        answer = strip_llm_wrapper(answer)
 
-        # Strip <think> reasoning blocks
-        answer = re.sub(r"<think>.*?</think>", "", answer, flags=re.DOTALL)
-        if "</think>" in answer:
-            answer = answer.split("</think>", 1)[-1]
-
-        # Strip markdown code fences
-        answer = answer.strip()
-        if answer.startswith("```"):
-            lines = answer.split("\n")
-            if lines[-1].strip() == "```":
-                lines = lines[1:-1]
-            else:
-                lines = lines[1:]
-            if lines and lines[0].strip().lower() in ("json",):
-                lines = lines[1:]
-            answer = "\n".join(lines).strip()
+        # Try to extract JSON array if answer has extra text
+        if not answer.startswith("["):
+            bracket_match = re.search(r"\[.*\]", answer, re.DOTALL)
+            if bracket_match:
+                answer = bracket_match.group(0)
 
         claims = json.loads(answer)
         if not isinstance(claims, list):
