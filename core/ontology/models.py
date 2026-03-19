@@ -29,6 +29,30 @@ class OntologyInfo(BaseModel):
     embedded_count: int = 0
 
 
+class RxNormImportStats(BaseModel):
+    """Tracks progress and results of an RxNorm import operation."""
+
+    concepts_loaded: int = 0
+    relationships_loaded: int = 0
+    snomed_crosswalk_loaded: int = 0
+    concepts_embedded: int = 0
+    elapsed_seconds: float = 0.0
+    status: str = "pending"  # pending | running | complete | error
+    phase: str = ""  # current phase description
+    error: str | None = None
+
+
+class RxNormConceptDetail(BaseModel):
+    """Full detail for a single RxNorm concept."""
+
+    rxcui: str
+    preferred_term: str
+    tty: str = ""
+    synonyms: list[str] = Field(default_factory=list)
+    relationships: list[dict] = Field(default_factory=list)
+    snomed_crossrefs: list[dict] = Field(default_factory=list)
+
+
 class SnomedConceptDetail(BaseModel):
     """Full detail for a single SNOMED CT concept."""
 

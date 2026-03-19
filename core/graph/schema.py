@@ -16,11 +16,19 @@ SCHEMA_STATEMENTS = [
     "CREATE CONSTRAINT icd10_code IF NOT EXISTS FOR (i:ICD10Code) REQUIRE i.code IS UNIQUE",
     # B-tree index for semantic tag filtering
     "CREATE INDEX snomed_semantic_tag IF NOT EXISTS FOR (s:SnomedConcept) ON (s.semantic_tag)",
+    # RxNorm ontology
+    "CREATE CONSTRAINT rxnorm_concept_rxcui IF NOT EXISTS FOR (r:RxNormConcept) REQUIRE r.rxcui IS UNIQUE",
 ]
 
-# Full-text indexes use different syntax — run separately after constraints
+# Full-text indexes use different syntax — run separately after constraints.
+# Must DROP first to add synonyms column (Neo4j doesn't support ALTER on FT indexes).
+FULLTEXT_DROP_STATEMENTS = [
+    "DROP INDEX snomed_term_search IF EXISTS",
+    "DROP INDEX rxnorm_term_search IF EXISTS",
+]
 FULLTEXT_STATEMENTS = [
-    "CREATE FULLTEXT INDEX snomed_term_search IF NOT EXISTS FOR (s:SnomedConcept) ON EACH [s.fsn, s.preferred_term]",
+    "CREATE FULLTEXT INDEX snomed_term_search IF NOT EXISTS FOR (s:SnomedConcept) ON EACH [s.fsn, s.preferred_term, s.synonyms]",
+    "CREATE FULLTEXT INDEX rxnorm_term_search IF NOT EXISTS FOR (r:RxNormConcept) ON EACH [r.preferred_term, r.synonyms]",
 ]
 
 
@@ -29,6 +37,11 @@ async def ensure_schema() -> None:
     async with get_session() as session:
         for stmt in SCHEMA_STATEMENTS:
             await session.run(stmt)
+        for stmt in FULLTEXT_DROP_STATEMENTS:
+            try:
+                await session.run(stmt)
+            except Exception:
+                pass  # Index may not exist yet
         for stmt in FULLTEXT_STATEMENTS:
             try:
                 await session.run(stmt)

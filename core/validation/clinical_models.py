@@ -30,13 +30,15 @@ class ClinicalConcept(BaseModel):
 
 
 class MappedConcept(BaseModel):
-    """A clinical concept mapped to a SNOMED CT code."""
+    """A clinical concept mapped to a SNOMED CT or RxNorm code."""
     concept: ClinicalConcept
     sctid: str | None = None
     snomed_term: str | None = None
     semantic_tag: str | None = None
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     icd10_codes: List[str] = Field(default_factory=list)
+    rxcui: str | None = None
+    source_ontology: str = "snomed"  # "snomed" or "rxnorm"
 
 
 class MissingConcept(BaseModel):
@@ -71,6 +73,30 @@ class ConsistencyResult(BaseModel):
     is_consistent: bool = True
 
 
+class SpecificityGap(BaseModel):
+    """A detected specificity gap in clinical documentation."""
+    rule_id: str
+    condition: str
+    mapped_concept: str
+    sctid: str | None = None
+    missing_attributes: List[str] = Field(default_factory=list)
+    present_attributes: dict[str, str] = Field(default_factory=dict)
+    current_icd10: List[str] = Field(default_factory=list)
+    potential_icd10: dict[str, str] = Field(default_factory=dict)
+    query_text: str = ""
+    priority: str = "medium"
+    impact: str = ""
+
+
+class SpecificityResult(BaseModel):
+    """Result of specificity analysis for the full note."""
+    gaps: List[SpecificityGap] = Field(default_factory=list)
+    specificity_score: float = Field(default=1.0, ge=0.0, le=1.0)
+    total_conditions_checked: int = 0
+    fully_specified_count: int = 0
+    queries_generated: int = 0
+
+
 class NoteValidationReport(BaseModel):
     """Full validation report for a clinical note."""
     note_hash: str
@@ -79,6 +105,7 @@ class NoteValidationReport(BaseModel):
     mapped_concepts: List[MappedConcept] = Field(default_factory=list)
     coverage: CoverageResult = Field(default_factory=CoverageResult)
     consistency: ConsistencyResult = Field(default_factory=ConsistencyResult)
+    specificity: SpecificityResult = Field(default_factory=SpecificityResult)
     icd10_suggestions: List[dict] = Field(default_factory=list)
     overall_score: float = Field(default=0.0, ge=0.0, le=1.0)
     summary: str = ""

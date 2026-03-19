@@ -182,6 +182,8 @@ async def search_nodes(query: str, limit: int = 20) -> GraphData:
             WHERE toLower(n.name) CONTAINS toLower($search_term)
                OR toLower(coalesce(n.description, '')) CONTAINS toLower($search_term)
                OR toLower(coalesce(n.text, '')) CONTAINS toLower($search_term)
+               OR toLower(coalesce(n.preferred_term, '')) CONTAINS toLower($search_term)
+               OR toLower(coalesce(n.fsn, '')) CONTAINS toLower($search_term)
             WITH n LIMIT $limit
             OPTIONAL MATCH (n)-[r]-(m)
             RETURN n, r, m

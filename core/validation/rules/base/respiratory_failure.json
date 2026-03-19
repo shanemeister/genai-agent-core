@@ -1,0 +1,66 @@
+[
+  {
+    "rule_id": "RF-001",
+    "condition": "respiratory failure",
+    "snomed_codes": ["409622000", "65710008", "46024003"],
+    "icd10_unspecified": ["J96.90"],
+    "icd10_specific": {
+      "acute_hypoxemic": "J96.00",
+      "acute_hypercapnic": "J96.02",
+      "acute_unspecified": "J96.00",
+      "chronic_hypoxemic": "J96.10",
+      "chronic_hypercapnic": "J96.12",
+      "acute_on_chronic_hypoxemic": "J96.20",
+      "acute_on_chronic_hypercapnic": "J96.22"
+    },
+    "attributes": [
+      {
+        "name": "type",
+        "description": "Type of respiratory failure (Type I hypoxemic / Type II hypercapnic)",
+        "required": true,
+        "evidence_patterns": [
+          "(?i)type\\s+(?:i{1,2}|[12])\\s+(?:respiratory?\\s+failure|resp(?:iratory)?\\s+failure)",
+          "(?i)hypoxemic\\s+(?:respiratory?\\s+)?failure",
+          "(?i)hypoxic\\s+(?:respiratory?\\s+)?failure",
+          "(?i)hypercapnic\\s+(?:respiratory?\\s+)?failure",
+          "(?i)hypercarb(?:ic)?\\s+(?:respiratory?\\s+)?failure",
+          "(?i)pco2\\s*(?:of\\s+|=\\s*|:\\s*)?([5-9]\\d|\\d{3})",
+          "(?i)paco2\\s*(?:of\\s+|=\\s*|:\\s*)?([5-9]\\d|\\d{3})",
+          "(?i)(?:pao2|po2)\\s*(?:of\\s+|=\\s*|:\\s*)?([1-5]\\d)(?:\\s|\\b)",
+          "(?i)(?:spo2|o2\\s+sat(?:uration)?)\\s*(?:of\\s+|=\\s*|:\\s*)?(\\d{2})\\s*%"
+        ],
+        "values": ["Type I (hypoxemic)", "Type II (hypercapnic)"]
+      },
+      {
+        "name": "acuity",
+        "description": "Acuity (acute/chronic/acute-on-chronic)",
+        "required": true,
+        "evidence_patterns": [
+          "(?i)acute\\s+(?:on\\s+chronic\\s+)?(?:hypoxemic\\s+|hypercapnic\\s+)?resp(?:iratory)?\\s+failure",
+          "(?i)chronic\\s+(?:hypoxemic\\s+|hypercapnic\\s+)?resp(?:iratory)?\\s+failure",
+          "(?i)acute[- ]+on[- ]+chronic\\s+resp(?:iratory)?\\s+failure",
+          "(?i)(?:acutely?|newly?)\\s+(?:developed|worsening)\\s+resp(?:iratory)?\\s+failure",
+          "(?i)(?:home\\s+o2|chronic\\s+(?:oxygen|o2)\\s+(?:use|therapy|requirement))"
+        ],
+        "values": ["acute", "chronic", "acute-on-chronic"]
+      },
+      {
+        "name": "ventilation",
+        "description": "Ventilatory support status",
+        "required": false,
+        "evidence_patterns": [
+          "(?i)(?:mechanical\\s+ventilat(?:ion|or)|intubat(?:ion|ed)|endotracheal\\s+tube|ett\\b)",
+          "(?i)(?:bipap|bilevel|bi-?level)(?:\\s+(?:support|therapy))?",
+          "(?i)(?:cpap|continuous\\s+positive\\s+airway\\s+pressure)",
+          "(?i)(?:high[- ]?flow\\s+nasal\\s+cannula|hfnc|optiflow)",
+          "(?i)(?:niv|non[- ]?invasive\\s+ventilat(?:ion|or))",
+          "(?i)(?:fio2|o2)\\s*(?:of\\s+|=\\s*|:\\s*)?(\\d+)\\s*%"
+        ],
+        "values": ["mechanical ventilation", "BiPAP/NIV", "CPAP", "HFNC", "nasal cannula"]
+      }
+    ],
+    "query_template": "Documentation indicates {condition}. For accurate ICD-10 coding, please clarify:\n{missing_questions}\n\nCurrent documentation supports: {present_summary}",
+    "priority": "high",
+    "layer": 1
+  }
+]

@@ -1,0 +1,66 @@
+[
+  {
+    "rule_id": "ENC-001",
+    "condition": "encephalopathy",
+    "snomed_codes": ["81308009", "2776000", "13092008", "55081003"],
+    "icd10_unspecified": ["G93.40"],
+    "icd10_specific": {
+      "toxic": "G92.8",
+      "metabolic": "G93.41",
+      "hepatic": "K72.90",
+      "hepatic_acute": "K72.01",
+      "hepatic_chronic": "K72.11",
+      "hypertensive": "I67.4",
+      "anoxic": "G93.1",
+      "septic": "G93.41",
+      "uremic": "G93.41",
+      "wernicke": "E51.2"
+    },
+    "attributes": [
+      {
+        "name": "type",
+        "description": "Type/etiology of encephalopathy",
+        "required": true,
+        "evidence_patterns": [
+          "(?i)metabolic\\s+encephalopathy",
+          "(?i)toxic[- ]+metabolic\\s+encephalopathy",
+          "(?i)toxic\\s+encephalopathy",
+          "(?i)hepatic\\s+encephalopathy",
+          "(?i)hypertensive\\s+encephalopathy",
+          "(?i)(?:anoxic|hypoxic)[- ]+(?:ischemic\\s+)?encephalopathy",
+          "(?i)septic\\s+encephalopathy",
+          "(?i)uremic\\s+encephalopathy",
+          "(?i)(?:wernicke|thiamine[- ]+deficiency)\\s+encephalopathy",
+          "(?i)(?:drug|medication|opioid|benzo)[- ]+(?:induced|related)\\s+encephalopathy"
+        ],
+        "values": ["metabolic", "toxic", "hepatic", "hypertensive", "anoxic", "septic", "uremic", "Wernicke"]
+      },
+      {
+        "name": "acuity",
+        "description": "Acuity (acute/chronic)",
+        "required": false,
+        "evidence_patterns": [
+          "(?i)acute\\s+(?:on\\s+chronic\\s+)?(?:metabolic\\s+|toxic\\s+|hepatic\\s+)?encephalopathy",
+          "(?i)chronic\\s+(?:metabolic\\s+|hepatic\\s+)?encephalopathy",
+          "(?i)(?:acutely?|newly?)\\s+(?:encephalopathic|altered|confused)"
+        ],
+        "values": ["acute", "chronic", "acute-on-chronic"]
+      },
+      {
+        "name": "severity",
+        "description": "Severity/grade of encephalopathy",
+        "required": false,
+        "evidence_patterns": [
+          "(?i)(?:grade|stage|west\\s+haven)\\s+([1-4]|[iI]{1,3}[vV]?)\\s+(?:hepatic\\s+)?encephalopathy",
+          "(?i)(?:mild|moderate|severe)\\s+encephalopathy",
+          "(?i)(?:gcs|glasgow\\s+coma\\s+(?:scale|score))\\s*(?:of\\s+|=\\s*|:\\s*)?([3-9]|1[0-5])",
+          "(?i)(?:obtunded|stuporous|comatose|lethargic|somnolent)"
+        ],
+        "values": ["mild", "moderate", "severe"]
+      }
+    ],
+    "query_template": "Documentation indicates {condition}. For accurate ICD-10 coding, please clarify the type/etiology:\n{missing_questions}\n\nCurrent documentation supports: {present_summary}",
+    "priority": "high",
+    "layer": 1
+  }
+]

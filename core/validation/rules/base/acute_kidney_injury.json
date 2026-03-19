@@ -1,0 +1,69 @@
+[
+  {
+    "rule_id": "AKI-001",
+    "condition": "acute kidney injury",
+    "snomed_codes": ["14669001", "35455006", "40095003"],
+    "icd10_unspecified": ["N17.9"],
+    "icd10_specific": {
+      "tubular_necrosis": "N17.0",
+      "cortical_necrosis": "N17.1",
+      "medullary_necrosis": "N17.2",
+      "prerenal": "N17.9",
+      "postrenal": "N17.9"
+    },
+    "attributes": [
+      {
+        "name": "stage",
+        "description": "KDIGO/AKIN stage (1/2/3)",
+        "required": true,
+        "evidence_patterns": [
+          "(?i)(?:kdigo|akin)\\s+(?:stage\\s+)?([1-3]|[iI]{1,3})",
+          "(?i)(?:stage|grade)\\s+([1-3]|[iI]{1,3})\\s+(?:aki|acute\\s+kidney)",
+          "(?i)(?:aki|acute\\s+kidney\\s+injury)\\s+(?:stage|grade)\\s+([1-3])"
+        ],
+        "values": ["1", "2", "3"]
+      },
+      {
+        "name": "etiology",
+        "description": "Etiology of AKI (prerenal/intrinsic/postrenal)",
+        "required": true,
+        "evidence_patterns": [
+          "(?i)prerenal(?:\\s+(?:azotemia|aki|acute\\s+kidney))?",
+          "(?i)intrinsic(?:\\s+(?:renal|kidney))?",
+          "(?i)(?:acute\\s+)?tubular\\s+necrosis|atn\\b",
+          "(?i)postrenal|(?:urinary\\s+)?obstruct(?:ion|ive)",
+          "(?i)contrast[- ]+(?:induced|associated)\\s+(?:nephropathy|aki|acute\\s+kidney)",
+          "(?i)(?:nephrotoxic|drug[- ]+induced)\\s+(?:aki|acute\\s+kidney|nephropathy)",
+          "(?i)(?:ischemic|hypoperfusion|hypotension)[- ]+(?:related|induced|associated)?\\s*(?:aki|acute\\s+kidney)?"
+        ],
+        "values": ["prerenal", "intrinsic/ATN", "postrenal/obstructive", "contrast-induced", "nephrotoxic"]
+      },
+      {
+        "name": "baseline_creatinine",
+        "description": "Baseline creatinine value for staging",
+        "required": false,
+        "evidence_patterns": [
+          "(?i)baseline\\s+(?:cr(?:eatinine)?|serum\\s+creatinine)\\s*(?:of\\s+|=\\s*|:\\s*)?([0-9]+\\.?[0-9]*)",
+          "(?i)(?:cr(?:eatinine)?|serum\\s+creatinine)\\s*(?:of\\s+|=\\s*|:\\s*)?([0-9]+\\.?[0-9]*)\\s*(?:mg/dL)?"
+        ],
+        "values": []
+      },
+      {
+        "name": "rrt",
+        "description": "Renal replacement therapy status",
+        "required": false,
+        "evidence_patterns": [
+          "(?i)(?:rrt|renal\\s+replacement\\s+therapy)",
+          "(?i)(?:crrt|continuous\\s+renal\\s+replacement)",
+          "(?i)(?:cvvh|cvvhd|cvvhdf)",
+          "(?i)(?:hemodialysis|hd\\b|dialysis)(?:\\s+(?:initiated|started|begun))?",
+          "(?i)(?:emergent|urgent)\\s+dialysis"
+        ],
+        "values": ["dialysis", "CRRT", "none"]
+      }
+    ],
+    "query_template": "Documentation indicates {condition}. For accurate ICD-10 coding and severity assessment, please clarify:\n{missing_questions}\n\nCurrent documentation supports: {present_summary}",
+    "priority": "high",
+    "layer": 1
+  }
+]

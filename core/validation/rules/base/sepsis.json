@@ -1,0 +1,69 @@
+[
+  {
+    "rule_id": "SEP-001",
+    "condition": "sepsis",
+    "snomed_codes": ["91302008", "281158006", "10001005", "238150007"],
+    "icd10_unspecified": ["A41.9"],
+    "icd10_specific": {
+      "strep_a": "A41.01",
+      "strep_b": "A41.02",
+      "staph_aureus_mssa": "A41.01",
+      "staph_aureus_mrsa": "A41.02",
+      "e_coli": "A41.51",
+      "pseudomonas": "A41.52",
+      "anaerobes": "A41.4",
+      "gram_negative": "A41.50",
+      "severe": "R65.20",
+      "shock": "R65.21"
+    },
+    "attributes": [
+      {
+        "name": "organism",
+        "description": "Causative organism of sepsis",
+        "required": true,
+        "evidence_patterns": [
+          "(?i)(?:e\\.?\\s*coli|escherichia\\s+coli)",
+          "(?i)(?:staph(?:ylococcus)?\\s+aureus|s\\.?\\s*aureus)",
+          "(?i)(?:mrsa|mssa|methicillin[- ]+(?:resistant|sensitive|susceptible))",
+          "(?i)(?:strep(?:tococcus)?|group\\s+[ab]\\s+strep)",
+          "(?i)pseudomonas(?:\\s+aeruginosa)?",
+          "(?i)klebsiella(?:\\s+pneumoniae)?",
+          "(?i)enterococcus|(?:vancomycin[- ]+resistant\\s+enterococcus|vre)",
+          "(?i)(?:gram\\s+(?:positive|negative))\\s+(?:bacteria|organism|cocci|rod|bacill)"
+        ],
+        "values": ["E. coli", "Staph aureus", "MRSA", "MSSA", "Streptococcus", "Pseudomonas", "Klebsiella", "Enterococcus"]
+      },
+      {
+        "name": "severity",
+        "description": "Severity of sepsis (sepsis/severe sepsis/septic shock)",
+        "required": true,
+        "evidence_patterns": [
+          "(?i)septic\\s+shock",
+          "(?i)severe\\s+sepsis",
+          "(?i)organ\\s+(?:dysfunction|failure)",
+          "(?i)vasopressor|norepinephrine|levophed|vasopressin|phenylephrine|epinephrine\\s+(?:drip|infusion|gtt)",
+          "(?i)(?:lactic\\s+acid|lactate)\\s*(?:of\\s+|=\\s*|:\\s*)?([4-9]|[1-9]\\d)",
+          "(?i)(?:map|mean\\s+arterial\\s+pressure)\\s*(?:<|less\\s+than)\\s*65"
+        ],
+        "values": ["sepsis", "severe sepsis", "septic shock"]
+      },
+      {
+        "name": "source",
+        "description": "Source/site of infection",
+        "required": false,
+        "evidence_patterns": [
+          "(?i)(?:urosepsis|urinary\\s+(?:tract\\s+)?source)",
+          "(?i)(?:pneumonia|pulmonary|respiratory)\\s+(?:source|origin)",
+          "(?i)(?:abdominal|intra[- ]?abdominal|peritonitis|biliary)\\s+(?:source|sepsis)",
+          "(?i)(?:skin|soft\\s+tissue|wound|cellulitis)\\s+(?:source|infection)",
+          "(?i)(?:line|catheter|central\\s+line)[- ]+(?:associated|related)\\s+(?:bloodstream\\s+)?infection",
+          "(?i)(?:bacteremia|blood\\s*stream\\s+infection)"
+        ],
+        "values": ["urinary", "pulmonary", "abdominal", "skin/soft tissue", "line-associated"]
+      }
+    ],
+    "query_template": "Documentation indicates {condition}. For accurate ICD-10 coding and severity reporting, please clarify:\n{missing_questions}\n\nCurrent documentation supports: {present_summary}",
+    "priority": "high",
+    "layer": 1
+  }
+]

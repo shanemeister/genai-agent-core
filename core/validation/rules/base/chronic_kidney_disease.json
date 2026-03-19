@@ -1,0 +1,60 @@
+[
+  {
+    "rule_id": "CKD-001",
+    "condition": "chronic kidney disease",
+    "snomed_codes": ["709044004", "431855005", "431856006", "431857002", "433144002", "46177005"],
+    "icd10_unspecified": ["N18.9"],
+    "icd10_specific": {
+      "stage1": "N18.1",
+      "stage2": "N18.2",
+      "stage3a": "N18.31",
+      "stage3b": "N18.32",
+      "stage3_unspecified": "N18.30",
+      "stage4": "N18.4",
+      "stage5": "N18.5",
+      "esrd": "N18.6"
+    },
+    "attributes": [
+      {
+        "name": "stage",
+        "description": "CKD stage (1-5 or ESRD)",
+        "required": true,
+        "evidence_patterns": [
+          "(?i)(?:ckd|chronic\\s+kidney\\s+disease)\\s+(?:stage\\s+)?([1-5](?:[ab])?|[iI]{1,3}[vV]?)",
+          "(?i)stage\\s+([1-5](?:[ab])?)\\s+(?:ckd|chronic\\s+kidney\\s+disease)",
+          "(?i)(?:esrd|end[- ]+stage\\s+(?:renal|kidney)\\s+disease)",
+          "(?i)(?:gfr|egfr|glomerular\\s+filtration\\s+rate)\\s*(?:of\\s+|=\\s*|:\\s*|<\\s*)?(\\d+)"
+        ],
+        "values": ["1", "2", "3a", "3b", "4", "5", "ESRD"]
+      },
+      {
+        "name": "dialysis_status",
+        "description": "Whether patient is on dialysis",
+        "required": false,
+        "evidence_patterns": [
+          "(?i)(?:on\\s+)?(?:hemodialysis|hd\\b|peritoneal\\s+dialysis|pd\\b)",
+          "(?i)(?:dialysis[- ]+dependent|requiring\\s+dialysis)",
+          "(?i)(?:av\\s+fistula|arteriovenous\\s+fistula|dialysis\\s+catheter|permcath)",
+          "(?i)(?:not\\s+(?:yet\\s+)?on\\s+dialysis|pre[- ]?dialysis)"
+        ],
+        "values": ["hemodialysis", "peritoneal dialysis", "not on dialysis"]
+      },
+      {
+        "name": "etiology",
+        "description": "Underlying cause of CKD",
+        "required": false,
+        "evidence_patterns": [
+          "(?i)(?:diabetic|dm)\\s+(?:nephropathy|kidney\\s+disease|ckd)",
+          "(?i)(?:hypertensive|htn)\\s+(?:nephropathy|nephrosclerosis|kidney\\s+disease|ckd)",
+          "(?i)(?:polycystic\\s+kidney|pkd|adpkd)",
+          "(?i)(?:glomerulonephritis|gn\\b|iga\\s+nephropathy)",
+          "(?i)(?:lupus\\s+nephritis|sle\\s+(?:with\\s+)?nephritis)"
+        ],
+        "values": ["diabetic", "hypertensive", "polycystic", "glomerulonephritis"]
+      }
+    ],
+    "query_template": "Documentation indicates {condition}. For accurate ICD-10 coding, please clarify:\n{missing_questions}\n\nCurrent documentation supports: {present_summary}",
+    "priority": "medium",
+    "layer": 1
+  }
+]

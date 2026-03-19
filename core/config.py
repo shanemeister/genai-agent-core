@@ -65,6 +65,7 @@ class Settings(BaseSettings):
     ontology_embed_batch_size: int = 256
     coverage_threshold: float = 0.6
     snomed_rf2_dir: str = "/home/exx/data_sdb/ontologies/snomed/SnomedCT_ManagedServiceUS_PRODUCTION_US1000124_20250901T120000Z/Snapshot"
+    rxnorm_rrf_dir: str = "/home/exx/data_sdb/ontologies/rxnorm/rrf"
 
     model_config = {
         "env_file": ".env",

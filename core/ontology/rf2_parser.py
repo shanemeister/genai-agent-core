@@ -236,13 +236,14 @@ def parse_icd10_map(snapshot_dir: str | Path) -> Iterator[dict]:
 # ── Description aggregation helper ───────────────────────────────────────
 
 def build_concept_lookup(snapshot_dir: str | Path) -> dict[str, dict]:
-    """Build an in-memory lookup: concept_id → {fsn, preferred_term, semantic_tag}.
+    """Build an in-memory lookup: concept_id → {fsn, preferred_term, semantic_tag, synonyms}.
 
     Reads the full descriptions file and groups by concept_id.
-    For each concept, captures the FSN and the first synonym (as preferred_term).
+    For each concept, captures the FSN, the first synonym (as preferred_term),
+    and all additional synonyms.
 
     Returns:
-        dict mapping sctid → {fsn, preferred_term, semantic_tag}
+        dict mapping sctid → {fsn, preferred_term, semantic_tag, synonyms}
     """
     lookup: dict[str, dict] = {}
 
@@ -250,14 +251,17 @@ def build_concept_lookup(snapshot_dir: str | Path) -> dict[str, dict]:
         cid = desc["concept_id"]
 
         if cid not in lookup:
-            lookup[cid] = {"fsn": "", "preferred_term": "", "semantic_tag": ""}
+            lookup[cid] = {"fsn": "", "preferred_term": "", "semantic_tag": "", "synonyms": []}
 
         if desc["is_fsn"]:
             lookup[cid]["fsn"] = desc["term"]
             lookup[cid]["semantic_tag"] = extract_semantic_tag(desc["term"])
-        elif not lookup[cid]["preferred_term"]:
-            # Use the first synonym as the preferred term
-            lookup[cid]["preferred_term"] = desc["term"]
+        else:
+            if not lookup[cid]["preferred_term"]:
+                # Use the first synonym as the preferred term
+                lookup[cid]["preferred_term"] = desc["term"]
+            # Collect all synonyms (including the preferred term)
+            lookup[cid]["synonyms"].append(desc["term"])
 
     # For concepts with FSN but no synonym, use FSN minus the semantic tag
     for cid, info in lookup.items():
@@ -265,5 +269,9 @@ def build_concept_lookup(snapshot_dir: str | Path) -> dict[str, dict]:
             # Strip "(semantic tag)" from FSN to get a clean preferred term
             info["preferred_term"] = _SEMANTIC_TAG_RE.sub("", info["fsn"]).strip()
 
-    log.info("Built concept lookup with %d entries", len(lookup))
+    total_synonyms = sum(len(info["synonyms"]) for info in lookup.values())
+    log.info(
+        "Built concept lookup with %d entries, %d total synonyms (avg %.1f/concept)",
+        len(lookup), total_synonyms, total_synonyms / len(lookup) if lookup else 0,
+    )
     return lookup

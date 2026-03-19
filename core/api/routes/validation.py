@@ -46,7 +46,8 @@ async def validate_note(req: NoteValidationRequest):
       2. Map concepts to SNOMED CT codes (embedding similarity)
       3. Check ontology coverage (graph traversal)
       4. Check consistency (contradiction detection)
-      5. Assemble validation report
+      5. Check specificity (CDI rules engine)
+      6. Assemble validation report
     """
     try:
         from core.validation.clinical_concept_extractor import extract_clinical_concepts
@@ -68,8 +69,8 @@ async def validate_note(req: NoteValidationRequest):
 
         # Step 2: Map to SNOMED CT
         mapped = await map_concepts_to_snomed(concepts)
-        mapped_count = sum(1 for m in mapped if m.sctid)
-        log.info("Mapped %d/%d concepts to SNOMED CT", mapped_count, len(concepts))
+        mapped_count = sum(1 for m in mapped if m.sctid or m.rxcui)
+        log.info("Mapped %d/%d concepts to ontology", mapped_count, len(concepts))
 
         # Step 3: Coverage check
         coverage = await check_coverage(mapped)
@@ -77,7 +78,11 @@ async def validate_note(req: NoteValidationRequest):
         # Step 4: Consistency check
         consistency = await check_consistency(mapped)
 
-        # Step 5: Collect ICD-10 suggestions
+        # Step 5: Specificity check (CDI rules engine)
+        from core.validation.specificity_rules import check_specificity
+        specificity = await check_specificity(mapped, req.note_text)
+
+        # Step 6: Collect ICD-10 suggestions
         icd10_suggestions: list[dict] = []
         if req.include_icd10:
             for mc in mapped:
@@ -89,19 +94,21 @@ async def validate_note(req: NoteValidationRequest):
                         "confidence": mc.confidence,
                     })
 
-        # Step 6: Compute overall score
+        # Step 7: Compute overall score
         overall = _compute_overall_score(
             mapped_count, len(concepts),
             coverage.coverage_score,
             consistency.is_consistent,
+            specificity.specificity_score,
         )
 
-        # Step 7: Build summary
+        # Step 8: Build summary
         summary = _build_summary(
             concept_count=len(concepts),
             mapped_count=mapped_count,
             coverage=coverage,
             consistency=consistency,
+            specificity=specificity,
         )
 
         return NoteValidationReport(
@@ -110,6 +117,7 @@ async def validate_note(req: NoteValidationRequest):
             mapped_concepts=mapped,
             coverage=coverage,
             consistency=consistency,
+            specificity=specificity,
             icd10_suggestions=icd10_suggestions,
             overall_score=overall,
             summary=summary,
@@ -161,19 +169,21 @@ def _compute_overall_score(
     total_concepts: int,
     coverage_score: float,
     is_consistent: bool,
+    specificity_score: float = 1.0,
 ) -> float:
-    """Composite quality score from mapping, coverage, and consistency."""
+    """Composite quality score from mapping, coverage, consistency, and specificity."""
     if total_concepts == 0:
         return 0.0
 
     mapping_score = mapped_count / total_concepts
     consistency_score = 1.0 if is_consistent else 0.5
 
-    # Weighted composite
+    # Weighted composite (4 components)
     overall = (
-        0.30 * mapping_score
-        + 0.50 * coverage_score
-        + 0.20 * consistency_score
+        0.25 * mapping_score
+        + 0.25 * coverage_score
+        + 0.25 * consistency_score
+        + 0.25 * specificity_score
     )
     return round(overall, 3)
 
@@ -183,12 +193,13 @@ def _build_summary(
     mapped_count: int,
     coverage,
     consistency,
+    specificity=None,
 ) -> str:
     """Build a human-readable validation summary."""
     parts = []
 
     # Mapping summary
-    parts.append(f"{mapped_count}/{concept_count} concepts mapped to SNOMED CT")
+    parts.append(f"{mapped_count}/{concept_count} concepts mapped to SNOMED CT / RxNorm")
 
     # Coverage summary
     pct = round(coverage.coverage_score * 100)
@@ -209,5 +220,13 @@ def _build_summary(
             parts.append(f"{error_count} consistency error(s)")
         if warning_count:
             parts.append(f"{warning_count} consistency warning(s)")
+
+    # Specificity summary
+    if specificity and specificity.total_conditions_checked > 0:
+        spec_pct = round(specificity.specificity_score * 100)
+        parts.append(f"{spec_pct}% documentation specificity ({specificity.fully_specified_count}/{specificity.total_conditions_checked} conditions)")
+        if specificity.queries_generated > 0:
+            conditions = ", ".join(g.condition for g in specificity.gaps[:3])
+            parts.append(f"{specificity.queries_generated} CDI query(ies) generated: {conditions}")
 
     return ". ".join(parts) + "."

@@ -67,6 +67,7 @@ async def _batch_merge_concepts(session, batch: list[dict]) -> int:
         SET c.fsn = row.fsn,
             c.preferred_term = row.pt,
             c.semantic_tag = row.tag,
+            c.synonyms = row.synonyms,
             c.definition_status = row.def_status,
             c.module_id = row.module_id,
             c.updated_at = datetime()
@@ -192,6 +193,7 @@ async def load_snomed(
                     "fsn": desc.get("fsn", ""),
                     "pt": desc.get("preferred_term", ""),
                     "tag": desc.get("semantic_tag", ""),
+                    "synonyms": desc.get("synonyms", []),
                     "def_status": concept["definition_status"],
                     "module_id": concept["module_id"],
                 })

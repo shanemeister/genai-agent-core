@@ -1,0 +1,70 @@
+[
+  {
+    "rule_id": "PNA-001",
+    "condition": "pneumonia",
+    "snomed_codes": ["233604007", "53084003", "278516003", "300999006", "422588002"],
+    "icd10_unspecified": ["J18.9"],
+    "icd10_specific": {
+      "pneumococcal": "J13",
+      "haemophilus": "J14",
+      "strep_b": "J15.3",
+      "staph_aureus": "J15.211",
+      "mrsa_pneumonia": "J15.212",
+      "e_coli": "J15.5",
+      "pseudomonas": "J15.1",
+      "klebsiella": "J15.0",
+      "aspiration": "J69.0",
+      "vap": "J95.851",
+      "viral": "J12.9",
+      "covid": "J12.82",
+      "influenza": "J10.08"
+    },
+    "attributes": [
+      {
+        "name": "type",
+        "description": "Type of pneumonia (community-acquired/hospital-acquired/ventilator-associated/aspiration)",
+        "required": true,
+        "evidence_patterns": [
+          "(?i)community[- ]+acquired\\s+pneumonia|cap\\b",
+          "(?i)hospital[- ]+acquired|nosocomial|hap\\b",
+          "(?i)ventilator[- ]+associated\\s+pneumonia|vap\\b",
+          "(?i)aspiration\\s+pneumonia",
+          "(?i)healthcare[- ]+associated\\s+pneumonia|hcap\\b"
+        ],
+        "values": ["community-acquired", "hospital-acquired", "ventilator-associated", "aspiration"]
+      },
+      {
+        "name": "organism",
+        "description": "Causative organism",
+        "required": false,
+        "evidence_patterns": [
+          "(?i)(?:strep(?:tococcus)?\\s+)?pneumoniae|pneumococcal",
+          "(?i)haemophilus\\s+influenzae",
+          "(?i)(?:staph(?:ylococcus)?\\s+aureus|mrsa|mssa)\\s+pneumonia",
+          "(?i)pseudomonas(?:\\s+aeruginosa)?",
+          "(?i)klebsiella(?:\\s+pneumoniae)?",
+          "(?i)legionella|legionnaires",
+          "(?i)mycoplasma(?:\\s+pneumoniae)?|atypical\\s+pneumonia",
+          "(?i)(?:influenza|flu)\\s+(?:with\\s+)?pneumonia",
+          "(?i)(?:covid|sars[- ]cov[- ]2|coronavirus)\\s+pneumonia",
+          "(?i)(?:rsv|respiratory\\s+syncytial\\s+virus)\\s+pneumonia"
+        ],
+        "values": ["pneumococcal", "H. influenzae", "Staph aureus", "Pseudomonas", "Klebsiella", "Legionella", "Mycoplasma", "viral"]
+      },
+      {
+        "name": "laterality",
+        "description": "Laterality and lobe location",
+        "required": false,
+        "evidence_patterns": [
+          "(?i)(right|left|bilateral)\\s+(?:lower|upper|middle)?\\s*(?:lobe)?\\s*(?:pneumonia|infiltrate|consolidation|opacity)",
+          "(?i)(?:rll|rul|rml|lll|lul)\\s+(?:pneumonia|infiltrate|consolidation|opacity)",
+          "(?i)(?:multilobar|multi[- ]lobar|bilateral)\\s+(?:pneumonia|infiltrate)"
+        ],
+        "values": ["right", "left", "bilateral"]
+      }
+    ],
+    "query_template": "Documentation indicates {condition}. For accurate ICD-10 coding, please clarify:\n{missing_questions}\n\nCurrent documentation supports: {present_summary}",
+    "priority": "high",
+    "layer": 1
+  }
+]

@@ -1,0 +1,71 @@
+[
+  {
+    "rule_id": "DM-001",
+    "condition": "diabetes mellitus",
+    "snomed_codes": ["73211009", "44054006", "46635009", "405751000"],
+    "icd10_unspecified": ["E11.9", "E10.9"],
+    "icd10_specific": {
+      "type2_unspecified": "E11.9",
+      "type2_nephropathy": "E11.21",
+      "type2_ckd": "E11.22",
+      "type2_retinopathy": "E11.319",
+      "type2_neuropathy": "E11.40",
+      "type2_pvd": "E11.51",
+      "type2_foot_ulcer": "E11.621",
+      "type2_hyperglycemia": "E11.65",
+      "type2_dka": "E11.10",
+      "type1_unspecified": "E10.9",
+      "type1_dka": "E10.10",
+      "type1_nephropathy": "E10.21",
+      "type1_retinopathy": "E10.319",
+      "type1_neuropathy": "E10.40"
+    },
+    "attributes": [
+      {
+        "name": "type",
+        "description": "Type of diabetes (Type 1 / Type 2)",
+        "required": true,
+        "evidence_patterns": [
+          "(?i)type\\s+[12]\\s+diabet(?:es|ic)",
+          "(?i)t[12]dm\\b",
+          "(?i)(?:iddm|insulin[- ]+dependent\\s+diabetes)",
+          "(?i)(?:niddm|non[- ]+insulin[- ]+dependent\\s+diabetes)",
+          "(?i)(?:juvenile|childhood)[- ]+(?:onset\\s+)?diabetes",
+          "(?i)(?:adult|maturity)[- ]+(?:onset\\s+)?diabetes"
+        ],
+        "values": ["Type 1", "Type 2"]
+      },
+      {
+        "name": "complications",
+        "description": "Diabetic complications (nephropathy, retinopathy, neuropathy, etc.)",
+        "required": false,
+        "evidence_patterns": [
+          "(?i)diabetic\\s+(?:nephropathy|kidney\\s+disease|renal\\s+disease)",
+          "(?i)diabetic\\s+(?:retinopathy|eye\\s+disease|macular\\s+edema)",
+          "(?i)diabetic\\s+(?:neuropathy|peripheral\\s+neuropathy|nerve\\s+damage)",
+          "(?i)diabetic\\s+(?:foot|foot\\s+ulcer|foot\\s+infection)",
+          "(?i)diabetic\\s+(?:ketoacidosis|dka\\b)",
+          "(?i)(?:hhs|hhns|hyperosmolar\\s+(?:hyperglycemic|nonketotic))",
+          "(?i)(?:peripheral\\s+vascular|pvd|pad)\\s+(?:disease)?\\s*(?:due\\s+to|from|secondary\\s+to)?\\s*diabet",
+          "(?i)diabet(?:es|ic)\\s+(?:with|and)\\s+(?:ckd|chronic\\s+kidney|renal)"
+        ],
+        "values": ["nephropathy", "retinopathy", "neuropathy", "foot ulcer", "DKA", "HHS", "PVD"]
+      },
+      {
+        "name": "control",
+        "description": "Glycemic control status",
+        "required": false,
+        "evidence_patterns": [
+          "(?i)(?:uncontrolled|poorly\\s+controlled|out\\s+of\\s+control)\\s+(?:type\\s+[12]\\s+)?diabet(?:es|ic)",
+          "(?i)(?:well|adequately|tightly)\\s+controlled\\s+(?:type\\s+[12]\\s+)?diabet(?:es|ic)",
+          "(?i)(?:hba1c|a1c|hemoglobin\\s+a1c)\\s*(?:of\\s+|=\\s*|:\\s*)?(\\d+\\.?\\d*)\\s*%?",
+          "(?i)hyperglycemia|blood\\s+(?:sugar|glucose)\\s+(?:elevated|high|>\\s*200)"
+        ],
+        "values": ["controlled", "uncontrolled"]
+      }
+    ],
+    "query_template": "Documentation indicates {condition}. For accurate ICD-10 coding and complication capture, please clarify:\n{missing_questions}\n\nCurrent documentation supports: {present_summary}",
+    "priority": "high",
+    "layer": 1
+  }
+]
