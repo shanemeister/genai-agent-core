@@ -241,6 +241,15 @@ async def check_specificity(
     evaluated_rules: set[str] = set()
 
     for mc in checkable:
+        # Defensive negation check: even if the LLM didn't flag negation,
+        # verify the concept is not negated in the note text.
+        if _is_negated_in_context(mc.concept.term, note_lower):
+            log.debug(
+                "Skipping concept '%s' — negated in note context",
+                mc.concept.term,
+            )
+            continue
+
         matching_rules = await _find_matching_rules(mc.sctid, mc.concept.term, rules)
 
         for rule in matching_rules:
@@ -382,6 +391,47 @@ async def _get_ancestor_sctids(sctid: str, max_hops: int = 2) -> set[str]:
     except Exception as e:
         log.debug("Ancestor lookup failed for %s: %s", sctid, e)
         return set()
+
+
+# ── Negation detection (defensive layer) ──────────────────────────────
+
+# Negation cue patterns — matched against the text preceding the concept term.
+# Window of ~60 chars before the term catches most clinical negation patterns.
+_NEGATION_CUES = re.compile(
+    r"(?:(?:no|denies|denied|without|absent|negative\s+for|"
+    r"not?\s+(?:any\s+)?(?:evidence|history|signs?|symptoms?|complaints?)\s+of|"
+    r"(?:does|did)\s+not\s+(?:have|report|show|demonstrate)|"
+    r"ruled?\s+out|rules?\s+out|r/o|"
+    r"no\s+(?:known\s+)?history\s+of|"
+    r"(?:has|have)\s+no)\b)",
+    re.IGNORECASE,
+)
+
+
+def _is_negated_in_context(term: str, note_lower: str, window: int = 80) -> bool:
+    """Check if a clinical term appears in a negated context in the note.
+
+    Scans backward from each occurrence of the term for negation cues
+    within a character window. This is a lightweight NegEx-style check
+    that catches patterns the LLM may miss.
+    """
+    term_lower = term.lower()
+    start = 0
+    while True:
+        idx = note_lower.find(term_lower, start)
+        if idx == -1:
+            break
+        # Look at the preceding text (up to `window` chars)
+        context_start = max(0, idx - window)
+        preceding = note_lower[context_start:idx]
+
+        # Check for negation cues in the preceding context
+        if _NEGATION_CUES.search(preceding):
+            # Found the term in a negated context
+            return True
+        start = idx + 1
+
+    return False
 
 
 # ── Evidence checking ───────────────────────────────────────────────────

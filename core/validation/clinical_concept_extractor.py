@@ -42,8 +42,20 @@ async def extract_clinical_concepts(
 For each concept, return:
 - "term": the clinical term as written (normalize abbreviations: RLQ → right lower quadrant)
 - "category": one of: condition, symptom, procedure, medication, body_site, lab_value
-- "negated": true if the concept is denied/absent/negative (e.g., "denies chest pain", "no fever")
+- "negated": true if the concept is denied, absent, negative, or ruled out
 - "qualifier": any modifier (e.g., "acute", "bilateral", "mild", "chronic") or null
+
+CRITICAL — NEGATION DETECTION:
+Setting "negated" correctly is the MOST IMPORTANT part of this task. A concept is negated when the clinical text indicates the condition is NOT present. You MUST mark negated=true for ALL of these patterns:
+- "denies X" / "denied X" / "patient denies X"
+- "no X" / "no history of X" / "no evidence of X" / "no signs of X"
+- "negative for X" / "X negative" / "X ruled out"
+- "without X" / "absent" / "not present" / "not found"
+- "no complaints of X" / "does not report X"
+- Review of Systems denials: ANY condition mentioned after "denies" in ROS is negated
+- Physical exam negatives: "no edema", "no calf tenderness", "no murmurs" are ALL negated
+- History negatives: "no history of thromboembolism" means thromboembolism is negated=true
+- DO NOT extract negated conditions as positive findings. When in doubt, mark negated=true.
 
 Clinical note:
 {truncated}
@@ -56,12 +68,15 @@ Rules:
 - Body sites mentioned as standalone anatomical references are body_site category
 - Symptoms are subjective complaints; conditions are assessed diagnoses
 - Be thorough — capture every clinically relevant concept
+- EVERY concept in "denies" sections or after "no"/"without" MUST have negated=true
 
 Return ONLY a JSON array. Example:
 [
   {{"term": "acute appendicitis", "category": "condition", "negated": false, "qualifier": "acute"}},
   {{"term": "right lower quadrant pain", "category": "symptom", "negated": false, "qualifier": null}},
-  {{"term": "chest pain", "category": "symptom", "negated": true, "qualifier": null}}
+  {{"term": "chest pain", "category": "symptom", "negated": true, "qualifier": null}},
+  {{"term": "thromboembolism", "category": "condition", "negated": true, "qualifier": null}},
+  {{"term": "fever", "category": "symptom", "negated": true, "qualifier": null}}
 ]
 
 Return ONLY the JSON array, nothing else."""
