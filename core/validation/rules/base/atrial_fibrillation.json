@@ -1,0 +1,34 @@
+[
+  {
+    "rule_id": "AFB-001",
+    "condition": "atrial fibrillation",
+    "snomed_codes": ["49436004", "233910005", "314208002", "440028005", "120041000119109"],
+    "icd10_unspecified": ["I48.91"],
+    "icd10_specific": {
+      "paroxysmal": "I48.0",
+      "persistent": "I48.1",
+      "chronic_permanent": "I48.2",
+      "typical_flutter": "I48.3",
+      "atypical_flutter": "I48.4"
+    },
+    "attributes": [
+      {
+        "name": "type",
+        "description": "Type of atrial fibrillation (paroxysmal, persistent, permanent/chronic)",
+        "required": true,
+        "evidence_patterns": [
+          "(?i)paroxysmal\\s+(?:atrial\\s+)?(?:fibrillation|a[- ]?fib)",
+          "(?i)persistent\\s+(?:atrial\\s+)?(?:fibrillation|a[- ]?fib)",
+          "(?i)(?:permanent|chronic)\\s+(?:atrial\\s+)?(?:fibrillation|a[- ]?fib)",
+          "(?i)(?:new[- ]onset|first\\s+detected|acute)\\s+(?:atrial\\s+)?(?:fibrillation|a[- ]?fib)",
+          "(?i)(?:atrial\\s+)?flutter",
+          "(?i)(?:long[- ]?standing\\s+persistent)\\s+(?:atrial\\s+)?(?:fibrillation|a[- ]?fib)"
+        ],
+        "values": ["paroxysmal", "persistent", "permanent", "new-onset"]
+      }
+    ],
+    "query_template": "Documentation indicates {condition}. AF type specificity affects HCC risk adjustment and coding. Please clarify:\n{missing_questions}\n\nCurrent documentation supports: {present_summary}",
+    "priority": "medium",
+    "layer": 1
+  }
+]

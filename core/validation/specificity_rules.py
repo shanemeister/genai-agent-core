@@ -60,6 +60,7 @@ _rules_loaded = False
 
 # Base rules directory (relative to this file)
 _BASE_RULES_DIR = Path(__file__).parent / "rules" / "base"
+_HOSPITAL_RULES_DIR = Path(__file__).parent / "rules" / "hospital"
 
 
 # ── Rule loading ────────────────────────────────────────────────────────
@@ -127,7 +128,7 @@ def load_rules(
 def get_rules() -> list[SpecificityRule]:
     """Get all loaded rules, loading from disk if needed."""
     if not _rules_loaded:
-        load_rules()
+        load_rules(hospital_dir=_HOSPITAL_RULES_DIR)
     return _rules
 
 
@@ -137,6 +138,63 @@ def get_rule(rule_id: str) -> SpecificityRule | None:
         if rule.rule_id == rule_id:
             return rule
     return None
+
+
+def save_rule(rule: SpecificityRule) -> SpecificityRule:
+    """Save a rule to the hospital rules directory (Layer 3).
+
+    Creates or overwrites a JSON file named after the rule_id.
+    Then reloads all rules so the in-memory cache is updated.
+    """
+    _HOSPITAL_RULES_DIR.mkdir(parents=True, exist_ok=True)
+
+    rule.layer = 3
+    filename = rule.rule_id.lower().replace(" ", "_") + ".json"
+    filepath = _HOSPITAL_RULES_DIR / filename
+
+    filepath.write_text(json.dumps([rule.dict()], indent=2))
+    log.info("Saved hospital rule %s to %s", rule.rule_id, filepath.name)
+
+    # Reload all rules to pick up the change
+    load_rules(hospital_dir=_HOSPITAL_RULES_DIR)
+    return rule
+
+
+def delete_rule(rule_id: str) -> bool:
+    """Delete a hospital rule (Layer 3 only).
+
+    Base rules (Layer 1) cannot be deleted through the API.
+    Returns True if deleted, False if not found or not deletable.
+    """
+    existing = get_rule(rule_id)
+    if not existing:
+        return False
+
+    if existing.layer == 1:
+        # Cannot delete base rules — only override via Layer 3
+        return False
+
+    # Find and remove the file
+    if _HOSPITAL_RULES_DIR.is_dir():
+        for json_file in _HOSPITAL_RULES_DIR.glob("*.json"):
+            try:
+                raw = json.loads(json_file.read_text())
+                if not isinstance(raw, list):
+                    raw = [raw]
+                # Check if this file contains the rule
+                if any(item.get("rule_id") == rule_id for item in raw):
+                    remaining = [item for item in raw if item.get("rule_id") != rule_id]
+                    if remaining:
+                        json_file.write_text(json.dumps(remaining, indent=2))
+                    else:
+                        json_file.unlink()
+                    log.info("Deleted hospital rule %s", rule_id)
+                    load_rules(hospital_dir=_HOSPITAL_RULES_DIR)
+                    return True
+            except Exception as e:
+                log.warning("Error checking %s for deletion: %s", json_file.name, e)
+
+    return False
 
 
 # ── Main specificity check ──────────────────────────────────────────────
@@ -450,17 +508,25 @@ def _assess_impact(rule: SpecificityRule) -> str:
     drg_impact_conditions = {
         "heart failure", "sepsis", "respiratory failure",
         "acute kidney injury", "pneumonia", "encephalopathy",
+        "malnutrition", "pressure injury", "coagulopathy",
+        "deep vein thrombosis", "pulmonary embolism",
+        "cerebrovascular accident", "anemia",
+        "alcohol dependence", "COPD",
+        "hypertensive heart disease",
+        "hyponatremia", "hypokalemia",
     }
     # Conditions that affect HCC risk scores
     hcc_impact_conditions = {
         "diabetes mellitus", "chronic kidney disease", "heart failure",
+        "COPD", "major depressive disorder", "atrial fibrillation",
+        "obesity",
     }
 
     condition = rule.condition.lower()
     impacts = []
-    if condition in drg_impact_conditions:
+    if condition in {c.lower() for c in drg_impact_conditions}:
         impacts.append("DRG impact")
-    if condition in hcc_impact_conditions:
+    if condition in {c.lower() for c in hcc_impact_conditions}:
         impacts.append("HCC impact")
     if not impacts:
         impacts.append("specificity")

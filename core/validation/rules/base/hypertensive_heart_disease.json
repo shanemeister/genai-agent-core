@@ -1,0 +1,31 @@
+[
+  {
+    "rule_id": "HHD-001",
+    "condition": "hypertensive heart disease",
+    "snomed_codes": ["64715009", "46113002", "194767001"],
+    "icd10_unspecified": ["I11.9"],
+    "icd10_specific": {
+      "with_heart_failure": "I11.0",
+      "without_heart_failure": "I11.9",
+      "with_ckd": "I13.10",
+      "with_hf_and_ckd": "I13.0"
+    },
+    "attributes": [
+      {
+        "name": "heart_failure_link",
+        "description": "Whether hypertension and heart failure are causally linked (hypertensive heart failure vs. coincident)",
+        "required": true,
+        "evidence_patterns": [
+          "(?i)hypertensive\\s+heart\\s+(?:failure|disease\\s+with\\s+(?:heart\\s+)?failure)",
+          "(?i)(?:heart\\s+failure|hf|chf)\\s+(?:due\\s+to|secondary\\s+to|caused\\s+by)\\s+(?:hypertension|htn)",
+          "(?i)(?:hypertension|htn)\\s+with\\s+(?:heart\\s+failure|hf|chf)",
+          "(?i)(?:hypertensive|htn)\\s+(?:cardiomyopathy|cardiomegaly)"
+        ],
+        "values": ["hypertensive heart failure", "hypertension with separate heart failure", "no heart failure"]
+      }
+    ],
+    "query_template": "Documentation indicates both hypertension and heart failure. Under ICD-10 guidelines, hypertension with heart failure is presumed causal (I11.0) unless documented otherwise. Please clarify:\n{missing_questions}\n\nCurrent documentation supports: {present_summary}",
+    "priority": "high",
+    "layer": 1
+  }
+]

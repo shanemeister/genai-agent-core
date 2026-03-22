@@ -1,0 +1,47 @@
+[
+  {
+    "rule_id": "DEP-001",
+    "condition": "major depressive disorder",
+    "snomed_codes": ["370143000", "268621008", "36923009"],
+    "icd10_unspecified": ["F32.9"],
+    "icd10_specific": {
+      "single_mild": "F32.0",
+      "single_moderate": "F32.1",
+      "single_severe_no_psychotic": "F32.2",
+      "single_severe_psychotic": "F32.3",
+      "recurrent_mild": "F33.0",
+      "recurrent_moderate": "F33.1",
+      "recurrent_severe_no_psychotic": "F33.2",
+      "recurrent_severe_psychotic": "F33.3",
+      "recurrent_in_remission": "F33.40"
+    },
+    "attributes": [
+      {
+        "name": "episode_pattern",
+        "description": "Single episode vs. recurrent",
+        "required": true,
+        "evidence_patterns": [
+          "(?i)(?:single|first)\\s+(?:episode|depressive\\s+episode)",
+          "(?i)recurrent\\s+(?:major\\s+)?(?:depressive|depression)",
+          "(?i)(?:history|h/?o|hx)\\s+(?:of\\s+)?(?:multiple|prior|previous)\\s+(?:depressive\\s+)?episodes"
+        ],
+        "values": ["single episode", "recurrent"]
+      },
+      {
+        "name": "severity",
+        "description": "Severity (mild, moderate, severe)",
+        "required": true,
+        "evidence_patterns": [
+          "(?i)(?:mild|moderate|severe)\\s+(?:major\\s+)?(?:depressive|depression)",
+          "(?i)(?:major\\s+)?(?:depressive|depression)\\s*,?\\s*(?:mild|moderate|severe)",
+          "(?i)(?:phq[- ]?9|depression\\s+score)\\s*(?:of\\s+|=\\s*|:\\s*)?(?:5[- ]9|10[- ]14|15[- ]19|2[0-7])",
+          "(?i)(?:in\\s+)?(?:partial\\s+|full\\s+)?remission"
+        ],
+        "values": ["mild", "moderate", "severe", "in remission"]
+      }
+    ],
+    "query_template": "Documentation indicates {condition}. MDD severity and recurrence pattern affect HCC risk adjustment. Please clarify:\n{missing_questions}\n\nCurrent documentation supports: {present_summary}",
+    "priority": "medium",
+    "layer": 1
+  }
+]

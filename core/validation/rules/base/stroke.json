@@ -1,0 +1,59 @@
+[
+  {
+    "rule_id": "STR-001",
+    "condition": "cerebrovascular accident",
+    "snomed_codes": ["230690007", "422504002", "432504007", "230691006"],
+    "icd10_unspecified": ["I63.9"],
+    "icd10_specific": {
+      "thrombotic_mca": "I63.311",
+      "thrombotic_aca": "I63.321",
+      "thrombotic_pca": "I63.331",
+      "embolic_mca": "I63.411",
+      "embolic_aca": "I63.421",
+      "hemorrhagic_intracerebral": "I61.9",
+      "hemorrhagic_subarachnoid": "I60.9",
+      "tia": "G45.9"
+    },
+    "attributes": [
+      {
+        "name": "type",
+        "description": "Type of stroke (ischemic/hemorrhagic/TIA)",
+        "required": true,
+        "evidence_patterns": [
+          "(?i)ischemic\\s+(?:stroke|cva|cerebrovascular)",
+          "(?i)(?:hemorrhagic|haemorrhagic)\\s+(?:stroke|cva)",
+          "(?i)(?:intracerebral|intraparenchymal)\\s+(?:hemorrhage|bleed)",
+          "(?i)subarachnoid\\s+hemorrhage|sah\\b",
+          "(?i)(?:tia|transient\\s+ischemic\\s+attack)",
+          "(?i)(?:thrombotic|embolic|thromboembolic)\\s+(?:stroke|cva)"
+        ],
+        "values": ["ischemic", "hemorrhagic", "TIA"]
+      },
+      {
+        "name": "mechanism",
+        "description": "Mechanism (thrombotic, embolic, lacunar)",
+        "required": false,
+        "evidence_patterns": [
+          "(?i)(?:thrombotic|large\\s+vessel)\\s+(?:stroke|occlusion|cva)",
+          "(?i)(?:embolic|cardioembolic)\\s+(?:stroke|occlusion|cva)",
+          "(?i)lacunar\\s+(?:stroke|infarct)",
+          "(?i)(?:carotid|vertebral|basilar)\\s+(?:occlusion|stenosis|dissection)"
+        ],
+        "values": ["thrombotic", "embolic", "lacunar"]
+      },
+      {
+        "name": "laterality",
+        "description": "Affected side/artery",
+        "required": false,
+        "evidence_patterns": [
+          "(?i)(right|left)\\s+(?:mca|aca|pca|carotid|hemispher|cerebell)",
+          "(?i)(?:mca|middle\\s+cerebral|aca|anterior\\s+cerebral|pca|posterior\\s+cerebral)\\s+(?:territory|distribution|infarct|stroke|occlusion)"
+        ],
+        "values": ["right", "left", "bilateral"]
+      }
+    ],
+    "query_template": "Documentation indicates {condition}. Stroke type and mechanism specificity are critical for accurate ICD-10 coding and quality reporting. Please clarify:\n{missing_questions}\n\nCurrent documentation supports: {present_summary}",
+    "priority": "high",
+    "layer": 1
+  }
+]

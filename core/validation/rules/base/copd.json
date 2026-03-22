@@ -1,0 +1,44 @@
+[
+  {
+    "rule_id": "COPD-001",
+    "condition": "COPD",
+    "snomed_codes": ["13645005", "195951007", "313296004", "313297008", "313299006"],
+    "icd10_unspecified": ["J44.1"],
+    "icd10_specific": {
+      "with_acute_exacerbation": "J44.1",
+      "with_acute_lower_resp_infection": "J44.0",
+      "without_exacerbation": "J44.9",
+      "with_respiratory_failure_acute": "J44.1+J96.00",
+      "with_respiratory_failure_chronic": "J44.1+J96.10"
+    },
+    "attributes": [
+      {
+        "name": "exacerbation_status",
+        "description": "Whether COPD is in acute exacerbation",
+        "required": true,
+        "evidence_patterns": [
+          "(?i)acute\\s+exacerbation\\s+(?:of\\s+)?(?:copd|chronic\\s+obstructive)",
+          "(?i)(?:copd|chronic\\s+obstructive)\\s+(?:with\\s+)?(?:acute\\s+)?exacerbation",
+          "(?i)aecopd|ae[- ]copd",
+          "(?i)copd\\s+flare",
+          "(?i)(?:stable|compensated)\\s+copd"
+        ],
+        "values": ["acute exacerbation", "stable", "with acute lower respiratory infection"]
+      },
+      {
+        "name": "respiratory_failure",
+        "description": "Whether associated with respiratory failure",
+        "required": false,
+        "evidence_patterns": [
+          "(?i)(?:with|and)\\s+(?:acute|chronic|acute[- ]on[- ]chronic)\\s+respiratory\\s+failure",
+          "(?i)respiratory\\s+failure\\s+(?:due\\s+to|secondary\\s+to|from)\\s+(?:copd|chronic\\s+obstructive)",
+          "(?i)(?:hypoxic|hypercapnic|hypoxemic)\\s+respiratory\\s+failure"
+        ],
+        "values": ["acute respiratory failure", "chronic respiratory failure", "acute-on-chronic respiratory failure"]
+      }
+    ],
+    "query_template": "Documentation indicates {condition}. COPD with acute exacerbation plus respiratory failure significantly shifts DRG assignment. Please clarify:\n{missing_questions}\n\nCurrent documentation supports: {present_summary}",
+    "priority": "high",
+    "layer": 1
+  }
+]

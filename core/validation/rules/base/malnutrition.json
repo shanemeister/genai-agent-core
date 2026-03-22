@@ -1,0 +1,55 @@
+[
+  {
+    "rule_id": "MAL-001",
+    "condition": "malnutrition",
+    "snomed_codes": ["272588001", "190606006", "238107002"],
+    "icd10_unspecified": ["E46"],
+    "icd10_specific": {
+      "mild_protein_calorie": "E44.1",
+      "moderate_protein_calorie": "E44.0",
+      "severe_protein_calorie": "E43",
+      "kwashiorkor": "E40",
+      "marasmus": "E41"
+    },
+    "attributes": [
+      {
+        "name": "severity",
+        "description": "Severity of malnutrition (mild/moderate/severe)",
+        "required": true,
+        "evidence_patterns": [
+          "(?i)severe\\s+(?:protein[- ]calorie\\s+)?malnutrition",
+          "(?i)moderate\\s+(?:protein[- ]calorie\\s+)?malnutrition",
+          "(?i)mild\\s+(?:protein[- ]calorie\\s+)?malnutrition",
+          "(?i)(?:severely|moderately|mildly)\\s+malnourished",
+          "(?i)cachex(?:ia|tic)",
+          "(?i)kwashiorkor|marasmus"
+        ],
+        "values": ["mild", "moderate", "severe"]
+      },
+      {
+        "name": "type",
+        "description": "Type of malnutrition (protein-calorie, protein, calorie)",
+        "required": false,
+        "evidence_patterns": [
+          "(?i)protein[- ]calorie\\s+malnutrition",
+          "(?i)protein\\s+(?:energy\\s+)?malnutrition",
+          "(?i)caloric?\\s+(?:deficiency|malnutrition)"
+        ],
+        "values": ["protein-calorie", "protein", "calorie"]
+      },
+      {
+        "name": "context",
+        "description": "Clinical context (acute illness, chronic disease, surgical)",
+        "required": false,
+        "evidence_patterns": [
+          "(?i)(?:illness|disease)[- ]+related\\s+malnutrition",
+          "(?i)(?:starvation|chronic\\s+disease|acute\\s+illness)[- ]+related"
+        ],
+        "values": ["acute illness-related", "chronic disease-related", "starvation-related"]
+      }
+    ],
+    "query_template": "Documentation indicates {condition}. Malnutrition severity significantly affects DRG assignment (severe = MCC). Please clarify:\n{missing_questions}\n\nCurrent documentation supports: {present_summary}",
+    "priority": "high",
+    "layer": 1
+  }
+]

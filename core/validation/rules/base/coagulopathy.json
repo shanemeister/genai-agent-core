@@ -1,0 +1,35 @@
+[
+  {
+    "rule_id": "COG-001",
+    "condition": "coagulopathy",
+    "snomed_codes": ["67406007", "234467004", "64779008", "76407009"],
+    "icd10_unspecified": ["D68.9"],
+    "icd10_specific": {
+      "dic": "D65",
+      "hereditary_factor_viii": "D66",
+      "hereditary_factor_ix": "D67",
+      "acquired": "D68.4",
+      "anticoagulant_induced": "D68.32",
+      "hemorrhagic_unspecified": "D68.9"
+    },
+    "attributes": [
+      {
+        "name": "type",
+        "description": "Type of coagulopathy (DIC, acquired, anticoagulant-induced, hereditary)",
+        "required": true,
+        "evidence_patterns": [
+          "(?i)(?:dic|disseminated\\s+intravascular\\s+coagulation)",
+          "(?i)(?:acquired|consumption)\\s+coagulopathy",
+          "(?i)(?:anticoagulant|warfarin|heparin|coumadin)[- ]+(?:induced|related|associated)\\s+coagulopathy",
+          "(?i)(?:hereditary|congenital)\\s+(?:coagulopathy|factor\\s+deficiency|hemophilia)",
+          "(?i)(?:liver\\s+disease|hepatic)[- ]+(?:related|associated)\\s+coagulopathy",
+          "(?i)(?:thrombocytopenia|low\\s+platelets)\\s+(?:with|and)\\s+coagulopathy"
+        ],
+        "values": ["DIC", "acquired", "anticoagulant-induced", "hepatic", "hereditary"]
+      }
+    ],
+    "query_template": "Documentation indicates {condition}. DIC is an MCC with significant DRG impact. Please clarify:\n{missing_questions}\n\nCurrent documentation supports: {present_summary}",
+    "priority": "high",
+    "layer": 1
+  }
+]

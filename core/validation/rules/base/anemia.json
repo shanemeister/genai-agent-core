@@ -1,0 +1,42 @@
+[
+  {
+    "rule_id": "ANE-001",
+    "condition": "anemia",
+    "snomed_codes": ["271737000", "87522002", "234347009", "61261009"],
+    "icd10_unspecified": ["D64.9"],
+    "icd10_specific": {
+      "iron_deficiency_blood_loss": "D50.0",
+      "iron_deficiency_other": "D50.8",
+      "iron_deficiency_unspecified": "D50.9",
+      "b12_deficiency": "D51.9",
+      "folate_deficiency": "D52.9",
+      "chronic_disease": "D63.8",
+      "acute_blood_loss": "D62",
+      "aplastic": "D61.9",
+      "sickle_cell": "D57.1",
+      "hemolytic": "D59.9"
+    },
+    "attributes": [
+      {
+        "name": "type",
+        "description": "Type of anemia (iron deficiency, chronic disease, blood loss, aplastic, hemolytic)",
+        "required": true,
+        "evidence_patterns": [
+          "(?i)iron\\s+deficiency\\s+anemia",
+          "(?i)anemia\\s+(?:of|due\\s+to)\\s+chronic\\s+(?:disease|illness|kidney|renal)",
+          "(?i)(?:acute\\s+)?blood\\s+loss\\s+anemia",
+          "(?i)aplastic\\s+anemia",
+          "(?i)hemolytic\\s+anemia",
+          "(?i)sickle\\s+cell",
+          "(?i)(?:b12|cobalamin|folate|folic\\s+acid)\\s+deficiency\\s+anemia",
+          "(?i)pernicious\\s+anemia",
+          "(?i)megaloblastic\\s+anemia"
+        ],
+        "values": ["iron deficiency", "chronic disease", "blood loss", "aplastic", "hemolytic", "B12 deficiency", "folate deficiency"]
+      }
+    ],
+    "query_template": "Documentation indicates {condition}. Anemia type specificity affects CC/MCC assignment. Please clarify:\n{missing_questions}\n\nCurrent documentation supports: {present_summary}",
+    "priority": "high",
+    "layer": 1
+  }
+]

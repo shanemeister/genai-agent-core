@@ -1,0 +1,43 @@
+[
+  {
+    "rule_id": "PUI-001",
+    "condition": "pressure injury",
+    "snomed_codes": ["399912005", "1163215007", "1163220003", "420226006"],
+    "icd10_unspecified": ["L89.90"],
+    "icd10_specific": {
+      "stage_1": "L89.x0",
+      "stage_2": "L89.x1",
+      "stage_3": "L89.x2",
+      "stage_4": "L89.x3",
+      "unstageable": "L89.x0"
+    },
+    "attributes": [
+      {
+        "name": "stage",
+        "description": "Stage of pressure injury (1, 2, 3, 4, unstageable, deep tissue)",
+        "required": true,
+        "evidence_patterns": [
+          "(?i)(?:stage|grade)\\s+([1-4iIvV]+)\\s+(?:pressure|decubitus)",
+          "(?i)(?:pressure|decubitus)\\s+(?:ulcer|injury|sore)\\s*,?\\s*(?:stage|grade)\\s+([1-4iIvV]+)",
+          "(?i)unstageable\\s+(?:pressure|decubitus)",
+          "(?i)deep\\s+tissue\\s+(?:pressure\\s+)?injury"
+        ],
+        "values": ["1", "2", "3", "4", "unstageable", "deep tissue"]
+      },
+      {
+        "name": "site",
+        "description": "Anatomic site of pressure injury",
+        "required": true,
+        "evidence_patterns": [
+          "(?i)(?:sacr(?:al|um)|coccyx|coccygeal)\\s+(?:pressure|decubitus)",
+          "(?i)(?:pressure|decubitus)\\s+(?:ulcer|injury|sore)\\s+(?:of\\s+)?(?:the\\s+)?(?:sacr|coccyx|heel|hip|buttock|back|elbow|ischial)",
+          "(?i)(heel|hip|buttock|sacr(?:al|um)|coccyx|ischial|elbow|back|ankle|shoulder)\\s+(?:pressure|decubitus|ulcer)"
+        ],
+        "values": ["sacral", "coccyx", "heel", "hip", "buttock", "ischial", "elbow"]
+      }
+    ],
+    "query_template": "Documentation indicates {condition}. Stage 3/4 pressure injuries are MCCs with significant DRG impact, and PSI-03 implications. Please clarify:\n{missing_questions}\n\nCurrent documentation supports: {present_summary}",
+    "priority": "high",
+    "layer": 1
+  }
+]

@@ -1,0 +1,70 @@
+[
+  {
+    "rule_id": "LYTE-001",
+    "condition": "hyponatremia",
+    "snomed_codes": ["89627008", "4575002", "302866003"],
+    "icd10_unspecified": ["E87.1"],
+    "icd10_specific": {
+      "acute_symptomatic": "E87.1",
+      "chronic": "E87.1",
+      "dilutional": "E87.1",
+      "siadh": "E22.2"
+    },
+    "attributes": [
+      {
+        "name": "acuity",
+        "description": "Acuity of hyponatremia (acute vs. chronic)",
+        "required": true,
+        "evidence_patterns": [
+          "(?i)acute\\s+hyponatremia",
+          "(?i)chronic\\s+hyponatremia",
+          "(?i)(?:severe|symptomatic|profound)\\s+hyponatremia",
+          "(?i)hyponatremia\\s+(?:Na|sodium)\\s*(?:<|less\\s+than)\\s*1[12][0-9]"
+        ],
+        "values": ["acute", "chronic", "acute symptomatic"]
+      },
+      {
+        "name": "etiology",
+        "description": "Cause of hyponatremia (SIADH, volume depletion, dilutional, medication)",
+        "required": false,
+        "evidence_patterns": [
+          "(?i)siadh|syndrome\\s+of\\s+inappropriate\\s+(?:adh|antidiuretic)",
+          "(?i)(?:hypovolemic|hypervolemic|euvolemic)\\s+hyponatremia",
+          "(?i)dilutional\\s+hyponatremia",
+          "(?i)(?:drug|medication)[- ]+induced\\s+hyponatremia"
+        ],
+        "values": ["SIADH", "hypovolemic", "hypervolemic", "euvolemic", "dilutional", "medication-induced"]
+      }
+    ],
+    "query_template": "Documentation indicates {condition}. Electrolyte disorders are common CCs. Please clarify:\n{missing_questions}\n\nCurrent documentation supports: {present_summary}",
+    "priority": "medium",
+    "layer": 1
+  },
+  {
+    "rule_id": "LYTE-002",
+    "condition": "hypokalemia",
+    "snomed_codes": ["43339004", "61120003", "10469003"],
+    "icd10_unspecified": ["E87.6"],
+    "icd10_specific": {
+      "acute": "E87.6",
+      "chronic": "E87.6"
+    },
+    "attributes": [
+      {
+        "name": "severity",
+        "description": "Severity or clinical significance of hypokalemia",
+        "required": true,
+        "evidence_patterns": [
+          "(?i)(?:severe|critical|symptomatic|profound)\\s+hypokalemia",
+          "(?i)hypokalemia\\s+(?:K|potassium)\\s*(?:<|less\\s+than)\\s*[23]\\.[0-9]",
+          "(?i)(?:mild|moderate)\\s+hypokalemia",
+          "(?i)hypokalemia\\s+(?:requiring|with)\\s+(?:iv|intravenous)\\s+(?:replacement|repletion|supplementation)"
+        ],
+        "values": ["mild", "moderate", "severe"]
+      }
+    ],
+    "query_template": "Documentation indicates {condition}. Electrolyte disorders are CCs when clinically significant. Please clarify:\n{missing_questions}\n\nCurrent documentation supports: {present_summary}",
+    "priority": "medium",
+    "layer": 1
+  }
+]

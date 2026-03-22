@@ -1,0 +1,105 @@
+[
+  {
+    "rule_id": "DVT-001",
+    "condition": "deep vein thrombosis",
+    "snomed_codes": ["128053003", "404223003", "710167004", "132251000119101"],
+    "icd10_unspecified": ["I82.90"],
+    "icd10_specific": {
+      "femoral_acute": "I82.411",
+      "iliac_acute": "I82.421",
+      "popliteal_acute": "I82.431",
+      "tibial_acute": "I82.441",
+      "lower_extremity_acute": "I82.401",
+      "upper_extremity_acute": "I82.601",
+      "femoral_chronic": "I82.511",
+      "lower_extremity_chronic": "I82.501"
+    },
+    "attributes": [
+      {
+        "name": "location",
+        "description": "Anatomic location of DVT (femoral, iliac, popliteal, tibial, upper extremity)",
+        "required": true,
+        "evidence_patterns": [
+          "(?i)(femoral|iliac|popliteal|tibial|peroneal|calf|subclavian|axillary|brachial|upper\\s+extremity|lower\\s+extremity)\\s+(?:vein\\s+)?(?:dvt|thrombus|thrombosis|clot)",
+          "(?i)(?:dvt|thrombus|thrombosis|clot)\\s+(?:of\\s+|in\\s+)?(?:the\\s+)?(femoral|iliac|popliteal|tibial|peroneal|calf|subclavian|axillary)"
+        ],
+        "values": ["femoral", "iliac", "popliteal", "tibial", "calf", "upper extremity"]
+      },
+      {
+        "name": "acuity",
+        "description": "Acuity of DVT (acute vs. chronic)",
+        "required": true,
+        "evidence_patterns": [
+          "(?i)acute\\s+(?:deep\\s+vein\\s+)?thromb",
+          "(?i)chronic\\s+(?:deep\\s+vein\\s+)?thromb",
+          "(?i)(?:new|recent|acute)\\s+dvt",
+          "(?i)(?:old|chronic|prior|history\\s+of)\\s+dvt"
+        ],
+        "values": ["acute", "chronic"]
+      },
+      {
+        "name": "laterality",
+        "description": "Which side (right, left, bilateral)",
+        "required": false,
+        "evidence_patterns": [
+          "(?i)(right|left|bilateral)\\s+(?:lower\\s+extremity\\s+)?(?:dvt|deep\\s+vein|thrombus|thrombosis)"
+        ],
+        "values": ["right", "left", "bilateral"]
+      }
+    ],
+    "query_template": "Documentation indicates {condition}. DVT location and acuity specificity affects ICD-10 coding and CC assignment. Please clarify:\n{missing_questions}\n\nCurrent documentation supports: {present_summary}",
+    "priority": "high",
+    "layer": 1
+  },
+  {
+    "rule_id": "PE-001",
+    "condition": "pulmonary embolism",
+    "snomed_codes": ["59282003", "706870000", "441557008"],
+    "icd10_unspecified": ["I26.99"],
+    "icd10_specific": {
+      "saddle_acute_cor_pulmonale": "I26.02",
+      "other_acute_cor_pulmonale": "I26.09",
+      "saddle_without_cor_pulmonale": "I26.92",
+      "other_without_cor_pulmonale": "I26.99",
+      "chronic": "I27.82"
+    },
+    "attributes": [
+      {
+        "name": "acuity",
+        "description": "Acuity of pulmonary embolism (acute vs. chronic)",
+        "required": true,
+        "evidence_patterns": [
+          "(?i)acute\\s+(?:pulmonary\\s+)?embol",
+          "(?i)chronic\\s+(?:pulmonary\\s+)?embol",
+          "(?i)(?:new|acute|recent)\\s+pe\\b",
+          "(?i)submassive\\s+pe",
+          "(?i)massive\\s+pe"
+        ],
+        "values": ["acute", "chronic"]
+      },
+      {
+        "name": "cor_pulmonale",
+        "description": "Whether acute cor pulmonale is present",
+        "required": false,
+        "evidence_patterns": [
+          "(?i)(?:acute\\s+)?cor\\s+pulmonale",
+          "(?i)right\\s+(?:heart|ventricular)\\s+(?:strain|failure|dysfunction)"
+        ],
+        "values": ["with acute cor pulmonale", "without acute cor pulmonale"]
+      },
+      {
+        "name": "type",
+        "description": "Type of PE (saddle, segmental, subsegmental)",
+        "required": false,
+        "evidence_patterns": [
+          "(?i)saddle\\s+(?:pulmonary\\s+)?embol",
+          "(?i)(?:segmental|subsegmental|bilateral|unilateral)\\s+(?:pulmonary\\s+)?embol"
+        ],
+        "values": ["saddle", "segmental", "subsegmental"]
+      }
+    ],
+    "query_template": "Documentation indicates {condition}. PE with acute cor pulmonale is an MCC with major DRG impact. Please clarify:\n{missing_questions}\n\nCurrent documentation supports: {present_summary}",
+    "priority": "high",
+    "layer": 1
+  }
+]

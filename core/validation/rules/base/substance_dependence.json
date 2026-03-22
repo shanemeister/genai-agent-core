@@ -1,0 +1,61 @@
+[
+  {
+    "rule_id": "ALC-001",
+    "condition": "alcohol dependence",
+    "snomed_codes": ["66590003", "713583005", "713862009", "7200002"],
+    "icd10_unspecified": ["F10.20"],
+    "icd10_specific": {
+      "uncomplicated": "F10.20",
+      "in_remission": "F10.21",
+      "with_withdrawal_uncomplicated": "F10.230",
+      "with_withdrawal_delirium": "F10.231",
+      "with_withdrawal_perceptual": "F10.232"
+    },
+    "attributes": [
+      {
+        "name": "status",
+        "description": "Current status (active, in remission, with withdrawal)",
+        "required": true,
+        "evidence_patterns": [
+          "(?i)(?:active|current)\\s+alcohol(?:ism|\\s+dependence|\\s+use\\s+disorder)",
+          "(?i)alcohol\\s+(?:dependence|use\\s+disorder)\\s+(?:in\\s+)?(?:remission|recovery)",
+          "(?i)alcohol\\s+withdrawal",
+          "(?i)(?:delirium\\s+tremens|dt|dts)\\b",
+          "(?i)(?:ciwa|withdrawal\\s+protocol)"
+        ],
+        "values": ["active", "in remission", "with withdrawal", "with withdrawal delirium"]
+      }
+    ],
+    "query_template": "Documentation indicates {condition}. Alcohol dependence with withdrawal is an MCC. Please clarify:\n{missing_questions}\n\nCurrent documentation supports: {present_summary}",
+    "priority": "high",
+    "layer": 1
+  },
+  {
+    "rule_id": "OPI-001",
+    "condition": "opioid dependence",
+    "snomed_codes": ["75544000", "191820008", "191819002"],
+    "icd10_unspecified": ["F11.20"],
+    "icd10_specific": {
+      "uncomplicated": "F11.20",
+      "in_remission": "F11.21",
+      "with_withdrawal": "F11.23"
+    },
+    "attributes": [
+      {
+        "name": "status",
+        "description": "Current status (active use, in remission, on MAT)",
+        "required": true,
+        "evidence_patterns": [
+          "(?i)(?:active|current)\\s+opioid\\s+(?:dependence|use\\s+disorder|addiction)",
+          "(?i)opioid\\s+(?:dependence|use\\s+disorder)\\s+(?:in\\s+)?(?:remission|recovery)",
+          "(?i)(?:on\\s+)?(?:mat|medication[- ]assisted\\s+treatment|suboxone|methadone|buprenorphine|vivitrol|naltrexone)",
+          "(?i)opioid\\s+withdrawal"
+        ],
+        "values": ["active", "in remission", "on MAT", "with withdrawal"]
+      }
+    ],
+    "query_template": "Documentation indicates {condition}. Please clarify:\n{missing_questions}\n\nCurrent documentation supports: {present_summary}",
+    "priority": "medium",
+    "layer": 1
+  }
+]

@@ -1,0 +1,42 @@
+[
+  {
+    "rule_id": "OBE-001",
+    "condition": "obesity",
+    "snomed_codes": ["238136002", "414916001", "408512008", "162864005"],
+    "icd10_unspecified": ["E66.9"],
+    "icd10_specific": {
+      "morbid_bmi_40_plus": "E66.01",
+      "morbid_bmi_unspecified": "E66.01",
+      "overweight": "E66.3",
+      "drug_induced": "E66.1",
+      "other_specified": "E66.8"
+    },
+    "attributes": [
+      {
+        "name": "severity",
+        "description": "Severity/classification of obesity (overweight, obese, morbidly obese)",
+        "required": true,
+        "evidence_patterns": [
+          "(?i)morbid(?:ly)?\\s+obese",
+          "(?i)(?:class\\s+(?:iii|3)|extreme|severe)\\s+obesity",
+          "(?i)bmi\\s*(?:of\\s+|=\\s*|:\\s*)?(\\d{2,3})(?:\\s|\\.|,)",
+          "(?i)(?:body\\s+mass\\s+index|bmi)\\s+(?:greater\\s+than|>|over)\\s*40",
+          "(?i)super\\s+(?:morbid(?:ly)?\\s+)?obese"
+        ],
+        "values": ["morbid", "class III", "class II", "class I"]
+      },
+      {
+        "name": "bmi_value",
+        "description": "BMI value",
+        "required": false,
+        "evidence_patterns": [
+          "(?i)(?:bmi|body\\s+mass\\s+index)\\s*(?:of\\s+|=\\s*|:\\s*|is\\s+)(\\d{2,3}(?:\\.\\d)?)"
+        ],
+        "values": []
+      }
+    ],
+    "query_template": "Documentation indicates {condition}. Morbid obesity (BMI ≥40) is a CC. Please clarify:\n{missing_questions}\n\nCurrent documentation supports: {present_summary}",
+    "priority": "medium",
+    "layer": 1
+  }
+]

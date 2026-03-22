@@ -31,6 +31,7 @@ from core.api.routes.mindfile import router as mindfile_router
 from core.api.routes.documents import router as documents_router
 from core.api.routes.ontology import router as ontology_router
 from core.api.routes.validation import router as validation_router
+from core.api.routes.rules import router as rules_router
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -64,6 +65,7 @@ app.include_router(mindfile_router)
 app.include_router(documents_router)
 app.include_router(ontology_router)
 app.include_router(validation_router)
+app.include_router(rules_router)
 
 # Startup readiness — tracks which subsystems initialized successfully
 _ready: dict[str, bool] = {
