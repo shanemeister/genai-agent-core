@@ -467,11 +467,14 @@ async def chat_stream(req: ChatRequest):
         answer_started = False
         sent_thinking_status = False
 
+        # Ollama counts reasoning tokens against max_tokens, so we need
+        # headroom for the model's chain-of-thought before the answer.
+        effective_max = max(req.max_tokens * 4, 8192)
         llm_payload = {
             "model": settings.llm_model_name,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": req.temperature,
-            "max_tokens": req.max_tokens,
+            "max_tokens": effective_max,
             "stream": True,
         }
 
@@ -493,8 +496,8 @@ async def chat_stream(req: ChatRequest):
                         chunk = json_mod.loads(data_str)
                         delta = chunk["choices"][0].get("delta", {})
 
-                        # Ollama streams thinking in reasoning_content
-                        reasoning_token = delta.get("reasoning_content", "")
+                        # Ollama streams thinking in "reasoning" (or "reasoning_content")
+                        reasoning_token = delta.get("reasoning", "") or delta.get("reasoning_content", "")
                         if reasoning_token:
                             reasoning_text += reasoning_token
                             if not sent_thinking_status:

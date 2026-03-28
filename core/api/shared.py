@@ -28,11 +28,14 @@ async def ask_llm(
     the model may think first — content may be in the reasoning field.
     """
     start = time.time()
+    # Ollama counts reasoning tokens against max_tokens, so we need
+    # headroom for the model's chain-of-thought before the answer.
+    effective_max = max(max_tokens * 4, 8192)
     payload = {
         "model": settings.llm_model_name,
         "messages": [{"role": "user", "content": question}],
         "temperature": temperature,
-        "max_tokens": max_tokens,
+        "max_tokens": effective_max,
     }
     async with httpx.AsyncClient(timeout=settings.llm_timeout) as client:
         response = await client.post(
