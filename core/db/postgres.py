@@ -254,4 +254,60 @@ async def init_database() -> None:
             WHERE session_id IS NOT NULL
         """)
 
+        # ── CMS MS-DRG v42 (FY2025) weights ───────────────────
+        # Source: https://www.cms.gov/medicare/payment/prospective-payment-systems/
+        #         acute-inpatient-pps/fy-2025-ipps-final-rule-home-page
+        # File: fy-2025-ipps-final-rule-table-5.zip
+        # One row per MS-DRG (~773 rows). The triplet_base groups DRGs that
+        # differ only by CC/MCC status (e.g., DRGs 291/292/293 for heart
+        # failure with MCC, CC, and without). This is the key for the
+        # CC/MCC impact model in the Dashboard.
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS cms_drg_weights (
+                drg INTEGER PRIMARY KEY,
+                mdc TEXT,
+                drg_type TEXT,                  -- MED, SURG, or PRE
+                title TEXT NOT NULL,
+                triplet_base TEXT,              -- Title with "WITH MCC/CC" stripped
+                cc_mcc_status TEXT,             -- 'MCC', 'CC', 'NONE', or NULL
+                weight_uncapped NUMERIC(10, 4),
+                weight_capped NUMERIC(10, 4),   -- 10% cap applied
+                gmlos NUMERIC(6, 2),
+                alos NUMERIC(6, 2),
+                post_acute BOOLEAN,
+                special_pay BOOLEAN,
+                fiscal_year INTEGER DEFAULT 2025,
+                loaded_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_drg_triplet
+            ON cms_drg_weights(triplet_base)
+            WHERE triplet_base IS NOT NULL
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_drg_mdc
+            ON cms_drg_weights(mdc)
+        """)
+
+        # ── CMS CC/MCC designation list ───────────────────────
+        # Source: fy-2025-ipps-final-rule-tables-6a-6k-and-tables-6p1a-6p4d.zip
+        # Files: Table 6I (Complete MCC List) + Table 6J (Complete CC List)
+        # ~18,300 ICD-10-CM codes designated as CC or MCC.
+        # A code present in both tables is rare — we only store the strongest
+        # designation (MCC > CC).
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS cms_cc_mcc_codes (
+                icd10_code TEXT PRIMARY KEY,
+                description TEXT NOT NULL,
+                designation TEXT NOT NULL,       -- 'MCC' or 'CC'
+                fiscal_year INTEGER DEFAULT 2025,
+                loaded_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_cc_mcc_designation
+            ON cms_cc_mcc_codes(designation)
+        """)
+
         log.info("Database schema initialized")
