@@ -1161,3 +1161,218 @@ async def submit_feedback(req: FeedbackRequest):
         context=req.context,
     )
     return {"feedback_id": str(feedback_id) if feedback_id else None, "status": "ok"}
+
+
+# ── Feedback analytics (read-only) ─────────────────────────────────────
+
+@router.get("/feedback/summary")
+async def feedback_summary():
+    """Aggregate feedback metrics for the admin analytics dashboard.
+
+    Returns total counts, positive/negative split, avg grounding score
+    by rating, and daily trend for the last 30 days.
+    """
+    from core.db.postgres import get_pool
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        # Overall counts
+        totals = await conn.fetchrow("""
+            SELECT
+                COUNT(*) AS total,
+                COUNT(*) FILTER (WHERE rating = 'positive') AS positive,
+                COUNT(*) FILTER (WHERE rating = 'negative') AS negative
+            FROM feedback
+        """)
+
+        # Grounding score by rating (joined with llm_calls)
+        by_rating = await conn.fetch("""
+            SELECT
+                f.rating,
+                COUNT(*) AS count,
+                AVG(lc.grounding_score)::float AS avg_grounding,
+                AVG(lc.duration_ms)::int AS avg_duration_ms
+            FROM feedback f
+            LEFT JOIN llm_calls lc ON lc.id = f.llm_call_id
+            WHERE lc.id IS NOT NULL
+            GROUP BY f.rating
+        """)
+
+        # 30-day trend
+        trend = await conn.fetch("""
+            SELECT
+                date_trunc('day', created_at)::date AS day,
+                COUNT(*) FILTER (WHERE rating = 'positive') AS positive,
+                COUNT(*) FILTER (WHERE rating = 'negative') AS negative
+            FROM feedback
+            WHERE created_at >= NOW() - INTERVAL '30 days'
+            GROUP BY day
+            ORDER BY day
+        """)
+
+        # Top flagged responses — recent negatives with full context
+        recent_negatives = await conn.fetch("""
+            SELECT f.id, f.rating, f.created_at, f.user_id,
+                   lc.caller, lc.grounding_score, lc.duration_ms,
+                   substring(lc.prompt, 1, 200) AS prompt_preview,
+                   substring(lc.response, 1, 200) AS response_preview
+            FROM feedback f
+            LEFT JOIN llm_calls lc ON lc.id = f.llm_call_id
+            WHERE f.rating = 'negative'
+            ORDER BY f.created_at DESC
+            LIMIT 10
+        """)
+
+    total = totals["total"] or 0
+    positive = totals["positive"] or 0
+    negative = totals["negative"] or 0
+    positive_rate = (positive / total) if total > 0 else 0.0
+
+    return {
+        "totals": {
+            "total": total,
+            "positive": positive,
+            "negative": negative,
+            "positive_rate": round(positive_rate, 3),
+        },
+        "by_rating": [dict(r) for r in by_rating],
+        "trend": [
+            {"day": str(r["day"]), "positive": r["positive"], "negative": r["negative"]}
+            for r in trend
+        ],
+        "recent_negatives": [
+            {**dict(r), "id": str(r["id"]), "created_at": r["created_at"].isoformat()}
+            for r in recent_negatives
+        ],
+    }
+
+
+@router.get("/feedback/export")
+async def feedback_export(rating: Optional[str] = None):
+    """Export feedback records as CSV for offline review.
+
+    Args:
+        rating: Optional filter — 'positive' or 'negative'
+
+    Returns a CSV file with feedback rows joined to their LLM calls.
+    Columns: created_at, rating, caller, model, temperature, duration_ms,
+    grounding_score, user_id, session_id, prompt, response.
+    """
+    import csv
+    import io
+    from fastapi.responses import StreamingResponse
+
+    from core.db.postgres import get_pool
+    pool = await get_pool()
+
+    where_clauses = []
+    params: list[Any] = []
+    idx = 1
+    if rating in ("positive", "negative"):
+        where_clauses.append(f"f.rating = ${idx}")
+        params.append(rating)
+        idx += 1
+    where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            f"""
+            SELECT f.created_at, f.rating, f.user_id, f.session_id,
+                   lc.caller, lc.model, lc.temperature, lc.duration_ms,
+                   lc.grounding_score, lc.prompt, lc.response
+            FROM feedback f
+            LEFT JOIN llm_calls lc ON lc.id = f.llm_call_id
+            {where_sql}
+            ORDER BY f.created_at DESC
+            """,
+            *params,
+        )
+
+    # Build CSV in memory
+    buf = io.StringIO()
+    writer = csv.writer(buf, quoting=csv.QUOTE_ALL)
+    writer.writerow([
+        "created_at", "rating", "user_id", "session_id",
+        "caller", "model", "temperature", "duration_ms",
+        "grounding_score", "prompt", "response",
+    ])
+    for r in rows:
+        writer.writerow([
+            r["created_at"].isoformat() if r["created_at"] else "",
+            r["rating"] or "",
+            r["user_id"] or "",
+            r["session_id"] or "",
+            r["caller"] or "",
+            r["model"] or "",
+            r["temperature"] if r["temperature"] is not None else "",
+            r["duration_ms"] if r["duration_ms"] is not None else "",
+            r["grounding_score"] if r["grounding_score"] is not None else "",
+            r["prompt"] or "",
+            r["response"] or "",
+        ])
+
+    buf.seek(0)
+    filename_suffix = f"-{rating}" if rating else ""
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f'attachment; filename="noesis-feedback{filename_suffix}.csv"',
+        },
+    )
+
+
+@router.get("/feedback/recent")
+async def feedback_recent(limit: int = 50, rating: Optional[str] = None):
+    """List recent feedback records with joined LLM call context.
+
+    Args:
+        limit: Max rows to return (default 50, max 500)
+        rating: Optional filter — 'positive' or 'negative'
+
+    Each row includes the prompt, response, grounding score, model,
+    and duration from the linked llm_calls row.
+    """
+    from core.db.postgres import get_pool
+    pool = await get_pool()
+    limit = min(limit, 500)
+
+    where_clauses = []
+    params: list[Any] = []
+    idx = 1
+
+    if rating in ("positive", "negative"):
+        where_clauses.append(f"f.rating = ${idx}")
+        params.append(rating)
+        idx += 1
+
+    where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+    params.append(limit)
+    limit_param = f"${idx}"
+
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            f"""
+            SELECT f.id, f.rating, f.created_at, f.user_id, f.session_id,
+                   f.context,
+                   lc.id AS llm_call_id,
+                   lc.caller, lc.model, lc.temperature, lc.duration_ms,
+                   lc.grounding_score, lc.prompt, lc.response
+            FROM feedback f
+            LEFT JOIN llm_calls lc ON lc.id = f.llm_call_id
+            {where_sql}
+            ORDER BY f.created_at DESC
+            LIMIT {limit_param}
+            """,
+            *params,
+        )
+
+    return [
+        {
+            **{k: v for k, v in dict(r).items() if k not in ("id", "llm_call_id", "created_at")},
+            "id": str(r["id"]),
+            "llm_call_id": str(r["llm_call_id"]) if r["llm_call_id"] else None,
+            "created_at": r["created_at"].isoformat(),
+        }
+        for r in rows
+    ]
