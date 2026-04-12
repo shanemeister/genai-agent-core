@@ -36,8 +36,14 @@ router = APIRouter(tags=["chat"])
 # Pydantic models
 # ---------------------------------------------------------------------------
 
+class ChatMessage(BaseModel):
+    role: str  # "user" or "assistant"
+    content: str
+
+
 class ChatRequest(BaseModel):
     message: str
+    history: list[ChatMessage] = []  # Prior turns for conversation context
     temperature: float = 0.7
     max_tokens: int = 2000
 
@@ -219,8 +225,31 @@ async def _compute_grounding(
     )
 
 
-def _build_chat_prompt(user_message: str, context_text: str) -> str:
-    """Build the full system + context + user prompt."""
+def _build_chat_prompt(
+    user_message: str,
+    context_text: str,
+    history: list[dict] | None = None,
+) -> str:
+    """Build the full system + context + history + user prompt.
+
+    If history is provided, it is rendered as a "Conversation so far" block
+    before the current user question, giving the LLM context about what
+    has been discussed in the session.
+    """
+    history_block = ""
+    if history:
+        # Cap each message to prevent prompt bloat (last 8KB of any single turn)
+        turns = []
+        for msg in history:
+            role = "User" if msg.get("role") == "user" else "Assistant"
+            content = (msg.get("content") or "")[:8000]
+            turns.append(f"{role}: {content}")
+        history_block = (
+            "\nConversation so far (oldest first):\n"
+            + "\n\n".join(turns)
+            + "\n"
+        )
+
     return f"""You are Noesis, a private AI assistant for knowledge organization and reasoning. You run locally and prioritize accuracy over helpfulness.
 
 CRITICAL RULES:
@@ -229,10 +258,11 @@ CRITICAL RULES:
 - Your training data has a cutoff date. If asked about recent events, products, or updates, acknowledge that your information may be outdated.
 - Use the retrieved context below when relevant, but don't force it into answers where it doesn't apply.
 - If a diagram or graph would help explain your response, mention it.
+- If the user refers to something from earlier in the conversation (e.g., "yes", "the previous point", "that example"), use the Conversation so far section to understand what they mean.
 
 Retrieved context from the knowledge base:
 {context_text}
-
+{history_block}
 User: {user_message}"""
 
 
@@ -379,7 +409,8 @@ async def chat(req: ChatRequest):
     context_text = "\n".join([f"- {doc['text']}" for doc in context_docs])
 
     # 2. Build prompt with context
-    prompt = _build_chat_prompt(req.message, context_text)
+    history_dicts = [m.model_dump() for m in req.history] if req.history else None
+    prompt = _build_chat_prompt(req.message, context_text, history=history_dicts)
 
     # 3. Call LLM with tool-use support (same framework as streaming endpoint)
     from core.tools.snomed_tools import get_all_tool_definitions, execute_tool
@@ -602,7 +633,8 @@ async def chat_stream(req: ChatRequest):
     )
     context_docs = await retrieve_context(req.message, k=5)
     context_text = "\n".join([f"- {doc['text']}" for doc in context_docs])
-    prompt = _build_chat_prompt(req.message, context_text)
+    history_dicts = [m.model_dump() for m in req.history] if req.history else None
+    prompt = _build_chat_prompt(req.message, context_text, history=history_dicts)
 
     retrieved = [
         {"doc_id": d["doc_id"], "text": d["text"], "score": round(d["score"], 3)}
