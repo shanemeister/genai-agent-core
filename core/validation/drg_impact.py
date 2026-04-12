@@ -190,14 +190,20 @@ async def _compute_principal_impact(
     if not triplet_base:
         return None
 
-    # Get the baseline (NONE) and best-target (MCC preferred, else CC) variants
+    # Get all variants. A triplet can have any subset of these depending on
+    # how CMS defines the DRG pair. Pulmonary embolism for example only has
+    # NOT_MCC (DRG 176) and MCC (DRG 175) — no CC tier, no NONE tier.
     none_variant = await get_triplet_variant(triplet_base, "NONE")
+    not_mcc_variant = await get_triplet_variant(triplet_base, "NOT_MCC")
     mcc_variant = await get_triplet_variant(triplet_base, "MCC")
     cc_variant = await get_triplet_variant(triplet_base, "CC")
 
-    # Sepsis and a few others only have MCC/CC (no NONE variant).
-    # Use the CC variant as baseline in that case.
-    baseline = none_variant or cc_variant
+    # Baseline: NONE (no qualifying comorbidity) → NOT_MCC (below-MCC pair)
+    #           → CC (for triplets that only have MCC+CC). In that order of
+    #           preference, since NONE is the "cleanest" baseline and
+    #           NOT_MCC is semantically equivalent ("below the MCC tier").
+    baseline = none_variant or not_mcc_variant or cc_variant
+    # Target: prefer the highest-value variant. MCC > CC > nothing.
     target = mcc_variant or cc_variant
 
     if not baseline or not target or baseline["drg"] == target["drg"]:

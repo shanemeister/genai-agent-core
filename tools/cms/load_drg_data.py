@@ -91,27 +91,53 @@ def download_and_extract(force: bool = False) -> None:
 
 # ── Step 2: Parse Table 5 (DRG weights) ──────────────────────
 
-# CC/MCC suffixes to strip when computing triplet_base
-# Order matters: check longer patterns first so "WITH CC/MCC" doesn't
-# match "WITH CC" or "WITH MCC".
-CC_MCC_SUFFIX_PATTERNS = [
-    (re.compile(r"\s*WITHOUT\s+CC/MCC\s*$", re.IGNORECASE), "NONE"),
-    (re.compile(r"\s*WITHOUT\s+MCC\s*$", re.IGNORECASE), "NOT_MCC"),
-    (re.compile(r"\s*WITHOUT\s+CC\s*$", re.IGNORECASE), "NOT_CC"),
-    (re.compile(r"\s*WITH\s+CC/MCC\s*$", re.IGNORECASE), "CC_OR_MCC"),
-    (re.compile(r"\s*WITH\s+MCC\s*$", re.IGNORECASE), "MCC"),
-    (re.compile(r"\s*WITH\s+CC\s*$", re.IGNORECASE), "CC"),
+# CC/MCC marker detection in DRG titles.
+#
+# Most titles end with one of these suffixes:
+#   WITH MCC, WITH CC, WITH CC/MCC, WITHOUT CC/MCC, WITHOUT MCC, WITHOUT CC
+#
+# A meaningful minority (15 DRGs in FY2025) have "WITH MCC OR <something>"
+# or "WITH CC OR <something>" where the OR introduces an additional
+# qualifying factor (e.g., "WITH MCC OR ACUTE COR PULMONALE"). These
+# still belong to the MCC/CC tier — the OR clause just gives a second
+# path into that tier.
+#
+# So we search for the CC/MCC marker anywhere in the title, not just
+# anchored to the end. The triplet_base is whatever comes BEFORE the
+# WITH/WITHOUT clause.
+CC_MCC_PATTERNS = [
+    # Check longest/most-specific patterns first
+    (re.compile(r"\bWITHOUT\s+CC/MCC\b", re.IGNORECASE), "NONE"),
+    (re.compile(r"\bWITHOUT\s+MCC\b", re.IGNORECASE), "NOT_MCC"),
+    (re.compile(r"\bWITHOUT\s+CC\b", re.IGNORECASE), "NOT_CC"),
+    (re.compile(r"\bWITH\s+CC/MCC\b", re.IGNORECASE), "CC_OR_MCC"),
+    (re.compile(r"\bWITH\s+MCC\b", re.IGNORECASE), "MCC"),
+    (re.compile(r"\bWITH\s+CC\b", re.IGNORECASE), "CC"),
 ]
 
 
 def parse_cc_mcc(title: str) -> tuple[str, str | None]:
     """Split a DRG title into (triplet_base, cc_mcc_status).
 
-    Returns (title, None) if no CC/MCC modifier is present.
+    The triplet_base is the portion of the title BEFORE the first
+    WITH/WITHOUT marker. The cc_mcc_status is the designation that
+    marker indicates.
+
+    Examples:
+      "HEART FAILURE AND SHOCK WITH MCC"
+        → ("HEART FAILURE AND SHOCK", "MCC")
+      "PULMONARY EMBOLISM WITH MCC OR ACUTE COR PULMONALE"
+        → ("PULMONARY EMBOLISM", "MCC")   # OR clause stripped
+      "SIMPLE PNEUMONIA AND PLEURISY WITHOUT CC/MCC"
+        → ("SIMPLE PNEUMONIA AND PLEURISY", "NONE")
+
+    Returns (title, None) if no WITH/WITHOUT marker is present.
     """
-    for pattern, status in CC_MCC_SUFFIX_PATTERNS:
+    for pattern, status in CC_MCC_PATTERNS:
         match = pattern.search(title)
         if match:
+            # Keep everything before the marker; discard the marker and
+            # everything after it (including any "OR ..." qualifier).
             base = title[: match.start()].strip()
             return base, status
     return title, None
