@@ -186,4 +186,72 @@ async def init_database() -> None:
             WITH (m = 16, ef_construction = 64)
         """)
 
+        # ── Observability: LLM call log ──────────────────────
+        # Every LLM call gets a row here. This is the ground-truth
+        # record for debugging, eval, cost tracking, and agent tuning.
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS llm_calls (
+                id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                created_at        TIMESTAMPTZ DEFAULT NOW(),
+                caller            VARCHAR(64) NOT NULL,
+                session_id        VARCHAR(128),
+                model             VARCHAR(128),
+                prompt            TEXT,
+                temperature       FLOAT,
+                max_tokens        INT,
+                response          TEXT,
+                reasoning         TEXT,
+                prompt_tokens     INT,
+                completion_tokens INT,
+                duration_ms       INT,
+                grounding_score   FLOAT,
+                tool_calls        JSONB,
+                error             TEXT
+            )
+        """)
+
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_llm_calls_created
+            ON llm_calls(created_at DESC)
+        """)
+
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_llm_calls_caller
+            ON llm_calls(caller)
+        """)
+
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_llm_calls_session
+            ON llm_calls(session_id)
+            WHERE session_id IS NOT NULL
+        """)
+
+        # ── Observability: User feedback ──────────────────────
+        # Binary thumbs-up/down linked to specific LLM calls.
+        # The join between feedback and llm_calls is the dataset
+        # for measuring "does better prompting = happier users?"
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS feedback (
+                id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                created_at  TIMESTAMPTZ DEFAULT NOW(),
+                llm_call_id UUID REFERENCES llm_calls(id),
+                session_id  VARCHAR(128),
+                rating      VARCHAR(16) NOT NULL,
+                user_id     VARCHAR(128),
+                context     JSONB
+            )
+        """)
+
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_feedback_llm_call
+            ON feedback(llm_call_id)
+            WHERE llm_call_id IS NOT NULL
+        """)
+
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_feedback_session
+            ON feedback(session_id)
+            WHERE session_id IS NOT NULL
+        """)
+
         log.info("Database schema initialized")

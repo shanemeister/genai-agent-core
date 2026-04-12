@@ -428,6 +428,25 @@ async def chat(req: ChatRequest):
     except Exception as e:
         log.warning("Grounding score computation failed: %s", e)
 
+    # 8. Observability: log this LLM call (best-effort)
+    try:
+        from core.db.llm_logger import log_llm_call
+        processing_time = llm_response.get("processing_time")
+        await log_llm_call(
+            caller="chat",
+            session_id=session_id,
+            model=llm_response.get("model"),
+            prompt=prompt,
+            response=visible_answer,
+            reasoning=reasoning,
+            temperature=req.temperature,
+            max_tokens=req.max_tokens,
+            duration_ms=int(processing_time * 1000) if processing_time else None,
+            grounding_score=grounding.overall if grounding else None,
+        )
+    except Exception as e:
+        log.warning("LLM call logging failed: %s", e)
+
     return ChatResponse(
         session_id=session_id,
         response=visible_answer,
@@ -591,8 +610,31 @@ async def chat_stream(req: ChatRequest):
         except Exception as e:
             log.warning("Stream grounding score failed: %s", e)
 
+        # ── Observability: log this LLM call ──────────────────
+        # Best-effort — failures here never break the chat pipeline.
+        llm_call_id = None
+        try:
+            from core.db.llm_logger import log_llm_call
+            llm_call_id = await log_llm_call(
+                caller="chat_stream",
+                session_id=session_id,
+                model=settings.llm_model_display,
+                prompt=prompt,
+                response=visible_answer,
+                reasoning=reasoning,
+                temperature=req.temperature,
+                max_tokens=req.max_tokens,
+                duration_ms=int(elapsed * 1000),
+                grounding_score=(
+                    grounding_dict.get("overall") if grounding_dict else None
+                ),
+            )
+        except Exception as e:
+            log.warning("LLM call logging failed: %s", e)
+
         done_payload = {
             "session_id": session_id,
+            "llm_call_id": str(llm_call_id) if llm_call_id else None,
             "reasoning": reasoning,
             "model": settings.llm_model_display,
             "processing_time": elapsed,
@@ -730,3 +772,38 @@ flowchart LR
         "model": llm_response.get("model"),
         "processing_time": llm_response.get("processing_time"),
     }
+
+
+# ---------------------------------------------------------------------------
+# Feedback endpoint — user thumbs up/down on LLM responses
+# ---------------------------------------------------------------------------
+
+class FeedbackRequest(BaseModel):
+    rating: str  # "positive" or "negative"
+    llm_call_id: Optional[str] = None
+    session_id: Optional[str] = None
+    user_id: Optional[str] = None
+    context: Optional[dict] = None
+
+
+@router.post("/feedback")
+async def submit_feedback(req: FeedbackRequest):
+    """Record user feedback (thumbs up/down) on an LLM response.
+
+    Links to the llm_calls table via llm_call_id so feedback can be
+    correlated with the exact prompt, response, and grounding score
+    that produced it.
+    """
+    if req.rating not in ("positive", "negative"):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="rating must be 'positive' or 'negative'")
+
+    from core.db.llm_logger import log_feedback
+    feedback_id = await log_feedback(
+        rating=req.rating,
+        llm_call_id=uuid.UUID(req.llm_call_id) if req.llm_call_id else None,
+        session_id=req.session_id,
+        user_id=req.user_id,
+        context=req.context,
+    )
+    return {"feedback_id": str(feedback_id) if feedback_id else None, "status": "ok"}
