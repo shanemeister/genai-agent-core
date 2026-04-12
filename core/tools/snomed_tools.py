@@ -318,7 +318,7 @@ async def _snomed_get_ancestors(sctid: str, max_depth: int = 2) -> dict[str, Any
 
 # ── Tool Dispatch ─────────────────────────────────────────────────────
 
-_TOOL_REGISTRY: dict[str, Any] = {
+_SNOMED_REGISTRY: dict[str, Any] = {
     "snomed_search": _snomed_search,
     "snomed_get_concept": _snomed_get_concept,
     "snomed_get_descendants": _snomed_get_descendants,
@@ -329,21 +329,37 @@ _TOOL_REGISTRY: dict[str, Any] = {
 async def execute_tool(tool_name: str, tool_args: dict[str, Any]) -> str:
     """Execute a tool by name and return the result as a JSON string.
 
+    Dispatches to SNOMED tools (snomed_*) or Rules tools (rules_*).
     Returns JSON so the result can be fed directly back to the LLM
     as a tool response message.
     """
-    fn = _TOOL_REGISTRY.get(tool_name)
-    if not fn:
-        return json.dumps({"error": f"Unknown tool: {tool_name}"})
+    # SNOMED tools
+    fn = _SNOMED_REGISTRY.get(tool_name)
+    if fn:
+        try:
+            result = await fn(**tool_args)
+            return json.dumps(result, default=str)
+        except Exception as e:
+            log.error("SNOMED tool execution failed (%s): %s", tool_name, e)
+            return json.dumps({"error": str(e)})
 
-    try:
-        result = await fn(**tool_args)
-        return json.dumps(result, default=str)
-    except Exception as e:
-        log.error("Tool execution failed (%s): %s", tool_name, e)
-        return json.dumps({"error": str(e)})
+    # Rules tools
+    if tool_name.startswith("rules_"):
+        try:
+            from core.tools.rules_tools import execute_tool as execute_rules_tool
+            return await execute_rules_tool(tool_name, tool_args)
+        except Exception as e:
+            log.error("Rules tool execution failed (%s): %s", tool_name, e)
+            return json.dumps({"error": str(e)})
+
+    return json.dumps({"error": f"Unknown tool: {tool_name}"})
 
 
 def get_all_tool_definitions() -> list[dict]:
-    """Return all available tool definitions for the LLM."""
-    return SNOMED_TOOLS
+    """Return all available tool definitions for the LLM.
+
+    Combines SNOMED tools (Phase 2) and Rules tools (Phase 3).
+    Future phases add more tools here.
+    """
+    from core.tools.rules_tools import RULES_TOOLS
+    return SNOMED_TOOLS + RULES_TOOLS
