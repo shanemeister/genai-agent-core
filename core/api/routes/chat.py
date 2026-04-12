@@ -381,16 +381,126 @@ async def chat(req: ChatRequest):
     # 2. Build prompt with context
     prompt = _build_chat_prompt(req.message, context_text)
 
-    # 3. Call LLM
-    llm_response = await ask_llm(
-        question=prompt,
-        temperature=req.temperature,
-        max_tokens=req.max_tokens,
-    )
+    # 3. Call LLM with tool-use support (same framework as streaming endpoint)
+    from core.tools.snomed_tools import get_all_tool_definitions, execute_tool
+    import time as time_mod
+
+    start_time = time_mod.time()
+    tools = get_all_tool_definitions()
+    messages = [{"role": "user", "content": prompt}]
+    tool_calls_log = []
+    effective_max = max(req.max_tokens * 4, 8192)
+
+    MAX_TOOL_ROUNDS = 3
+    finish_reason = ""
+    msg = {}
+
+    # First call with tools
+    async with httpx.AsyncClient(timeout=settings.llm_timeout) as client:
+        resp = await client.post(
+            f"{settings.llm_base_url}/v1/chat/completions",
+            json={
+                "model": settings.llm_model_name,
+                "messages": messages,
+                "tools": tools,
+                "temperature": req.temperature,
+                "max_tokens": effective_max,
+                "stream": False,
+            },
+            timeout=settings.llm_timeout,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        choice = data["choices"][0]
+        finish_reason = choice.get("finish_reason", "")
+        msg = choice.get("message", {})
+
+    # Tool-call loop
+    for tool_round in range(MAX_TOOL_ROUNDS):
+        if finish_reason != "tool_calls" or not msg.get("tool_calls"):
+            break
+        messages.append(msg)
+
+        for tc in msg["tool_calls"]:
+            fn = tc.get("function", {})
+            tool_name = fn.get("name", "")
+            try:
+                tool_args = json_mod.loads(fn.get("arguments", "{}"))
+            except (json_mod.JSONDecodeError, TypeError):
+                tool_args = {}
+
+            log.info("Tool call (round %d): %s(%s)", tool_round + 1, tool_name, tool_args)
+            result_json = await execute_tool(tool_name, tool_args)
+
+            tool_calls_log.append({
+                "tool": tool_name, "args": tool_args,
+                "result_length": len(result_json), "round": tool_round + 1,
+            })
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tc.get("id", ""),
+                "content": result_json,
+            })
+
+        # Next LLM call with tool results
+        async with httpx.AsyncClient(timeout=settings.llm_timeout) as client:
+            resp = await client.post(
+                f"{settings.llm_base_url}/v1/chat/completions",
+                json={
+                    "model": settings.llm_model_name,
+                    "messages": messages,
+                    "tools": tools,
+                    "temperature": req.temperature,
+                    "max_tokens": effective_max,
+                    "stream": False,
+                },
+                timeout=settings.llm_timeout,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            choice = data["choices"][0]
+            finish_reason = choice.get("finish_reason", "")
+            msg = choice.get("message", {})
+
+    # If we exhausted tool rounds and the LLM still wants tools,
+    # make one final call WITHOUT tools to force a text answer
+    if finish_reason == "tool_calls" and msg.get("tool_calls"):
+        messages.append(msg)
+        # Add a synthetic tool response that says "no more tools available"
+        for tc in msg["tool_calls"]:
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tc.get("id", ""),
+                "content": '{"note": "Tool call limit reached. Please answer with the information you have gathered so far."}',
+            })
+        async with httpx.AsyncClient(timeout=settings.llm_timeout) as client:
+            resp = await client.post(
+                f"{settings.llm_base_url}/v1/chat/completions",
+                json={
+                    "model": settings.llm_model_name,
+                    "messages": messages,
+                    "temperature": req.temperature,
+                    "max_tokens": effective_max,
+                    "stream": False,
+                    # NOTE: no "tools" key — forces text generation
+                },
+                timeout=settings.llm_timeout,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            msg = data["choices"][0].get("message", {})
 
     # 3b. Separate <think> reasoning from visible answer
-    raw_answer = llm_response["answer"]
+    raw_answer = msg.get("content", "") or ""
     visible_answer, reasoning = _split_thinking(raw_answer)
+    processing_time = round(time_mod.time() - start_time, 2)
+
+    # Build a compatible llm_response dict for the rest of the pipeline
+    llm_response = {
+        "answer": raw_answer,
+        "model": settings.llm_model_display,
+        "processing_time": processing_time,
+    }
 
     # 4. Build retrieved context for frontend display
     retrieved = [
@@ -417,21 +527,43 @@ async def chat(req: ChatRequest):
         req.message, visible_answer, session_id, llm_response.get("model")
     )
 
-    # 7. Grounding score
+    # 7. Grounding score — tool-aware
     grounding = None
     try:
-        grounding = await _compute_grounding(
-            query=req.message,
-            context_docs=context_docs,
-            has_reasoning=reasoning is not None,
-        )
+        if tool_calls_log:
+            total_result_bytes = sum(tc.get("result_length", 0) for tc in tool_calls_log)
+            tool_count = len(tool_calls_log)
+            max_round = max(tc.get("round", 1) for tc in tool_calls_log)
+            exhausted = (max_round >= MAX_TOOL_ROUNDS)
+
+            if total_result_bytes > 500 and not exhausted:
+                score, label = 0.95, "High"
+                detail = f"Tool-grounded: {tool_count} tool calls returned {total_result_bytes:,} bytes of structured SNOMED data"
+            elif total_result_bytes > 100:
+                score, label = 0.70, "Medium"
+                detail = f"Partially tool-grounded: {tool_count} calls, {total_result_bytes:,} bytes"
+            else:
+                score, label = 0.35, "Low"
+                detail = f"Tools returned minimal data ({total_result_bytes} bytes)"
+
+            grounding = GroundingScore(
+                overall=score, retrieval=0.0, coverage=0.0,
+                diversity=0.0, reasoning=1.0 if reasoning else 0.0,
+                label=label, detail=detail,
+            )
+        else:
+            grounding = await _compute_grounding(
+                query=req.message,
+                context_docs=context_docs,
+                has_reasoning=reasoning is not None,
+            )
     except Exception as e:
         log.warning("Grounding score computation failed: %s", e)
 
     # 8. Observability: log this LLM call (best-effort)
     try:
         from core.db.llm_logger import log_llm_call
-        processing_time = llm_response.get("processing_time")
+        pt = llm_response.get("processing_time")
         await log_llm_call(
             caller="chat",
             session_id=session_id,
@@ -441,8 +573,9 @@ async def chat(req: ChatRequest):
             reasoning=reasoning,
             temperature=req.temperature,
             max_tokens=req.max_tokens,
-            duration_ms=int(processing_time * 1000) if processing_time else None,
+            duration_ms=int(pt * 1000) if pt else None,
             grounding_score=grounding.overall if grounding else None,
+            tool_calls=tool_calls_log if tool_calls_log else None,
         )
     except Exception as e:
         log.warning("LLM call logging failed: %s", e)
@@ -481,93 +614,244 @@ async def chat_stream(req: ChatRequest):
 
         yield f"event: status\ndata: {json_mod.dumps({'phase': 'retrieving'})}\n\n"
 
+        # ── Tool-use: first LLM call (non-streaming) to check if tools are needed ──
+        from core.tools.snomed_tools import get_all_tool_definitions, execute_tool
+
+        effective_max = max(req.max_tokens * 4, 8192)
+        tools = get_all_tool_definitions()
+        messages = [{"role": "user", "content": prompt}]
+        tool_calls_log = []  # For observability
+
+        # Phase 1: Ask the LLM with tools available (non-streaming so we
+        # can cleanly detect tool_calls in the response)
+        try:
+            async with httpx.AsyncClient(timeout=settings.llm_timeout) as client:
+                tool_check = await client.post(
+                    f"{settings.llm_base_url}/v1/chat/completions",
+                    json={
+                        "model": settings.llm_model_name,
+                        "messages": messages,
+                        "tools": tools,
+                        "temperature": req.temperature,
+                        "max_tokens": effective_max,
+                        "stream": False,
+                    },
+                    timeout=settings.llm_timeout,
+                )
+                tool_check.raise_for_status()
+                tool_response = tool_check.json()
+                choice = tool_response["choices"][0]
+                finish_reason = choice.get("finish_reason", "")
+                msg = choice.get("message", {})
+        except Exception as e:
+            yield f"event: error\ndata: {json_mod.dumps({'detail': f'LLM tool-check failed: {e}'})}\n\n"
+            return
+
+        # Phase 2: Tool-call loop — allow up to 3 rounds of tool calls.
+        # The LLM may call search first, then get_descendants with the SCTID
+        # it found. Each round: execute tools, feed results back, ask the LLM
+        # again (non-streaming) until it either produces content or we hit the limit.
+        MAX_TOOL_ROUNDS = 3
+        _skip_streaming = False
+
+        for tool_round in range(MAX_TOOL_ROUNDS):
+            if finish_reason != "tool_calls" or not msg.get("tool_calls"):
+                break  # LLM is done with tools
+
+            yield f"event: status\ndata: {json_mod.dumps({'phase': 'thinking', 'detail': f'Calling tools (round {tool_round + 1})...'})}\n\n"
+
+            # Add the assistant's tool-call message to the conversation
+            messages.append(msg)
+
+            for tc in msg["tool_calls"]:
+                fn = tc.get("function", {})
+                tool_name = fn.get("name", "")
+                try:
+                    tool_args = json_mod.loads(fn.get("arguments", "{}"))
+                except (json_mod.JSONDecodeError, TypeError):
+                    tool_args = {}
+
+                log.info("Tool call (round %d): %s(%s)", tool_round + 1, tool_name, tool_args)
+
+                result_json = await execute_tool(tool_name, tool_args)
+
+                tool_calls_log.append({
+                    "tool": tool_name,
+                    "args": tool_args,
+                    "result_length": len(result_json),
+                    "round": tool_round + 1,
+                })
+
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.get("id", ""),
+                    "content": result_json,
+                })
+
+            # Ask the LLM again with the tool results — it may request more
+            # tools or produce the final answer
+            try:
+                async with httpx.AsyncClient(timeout=settings.llm_timeout) as client:
+                    next_resp = await client.post(
+                        f"{settings.llm_base_url}/v1/chat/completions",
+                        json={
+                            "model": settings.llm_model_name,
+                            "messages": messages,
+                            "tools": tools,
+                            "temperature": req.temperature,
+                            "max_tokens": effective_max,
+                            "stream": False,
+                        },
+                        timeout=settings.llm_timeout,
+                    )
+                    next_resp.raise_for_status()
+                    next_data = next_resp.json()
+                    choice = next_data["choices"][0]
+                    finish_reason = choice.get("finish_reason", "")
+                    msg = choice.get("message", {})
+            except Exception as e:
+                yield f"event: error\ndata: {json_mod.dumps({'detail': f'Tool follow-up failed: {e}'})}\n\n"
+                return
+
+        # If we exhausted tool rounds and the LLM still wants more,
+        # force a final answer without tools
+        if finish_reason == "tool_calls" and msg.get("tool_calls"):
+            messages.append(msg)
+            for tc in msg["tool_calls"]:
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.get("id", ""),
+                    "content": '{"note": "Tool call limit reached. Please answer with the information you have gathered so far."}',
+                })
+            try:
+                async with httpx.AsyncClient(timeout=settings.llm_timeout) as client:
+                    force_resp = await client.post(
+                        f"{settings.llm_base_url}/v1/chat/completions",
+                        json={
+                            "model": settings.llm_model_name,
+                            "messages": messages,
+                            "temperature": req.temperature,
+                            "max_tokens": effective_max,
+                            "stream": False,
+                        },
+                        timeout=settings.llm_timeout,
+                    )
+                    force_resp.raise_for_status()
+                    force_data = force_resp.json()
+                    msg = force_data["choices"][0].get("message", {})
+                    finish_reason = force_data["choices"][0].get("finish_reason", "")
+            except Exception as e:
+                yield f"event: error\ndata: {json_mod.dumps({'detail': f'Final answer generation failed: {e}'})}\n\n"
+                return
+
+        # After the tool loop, check what we have
+        if msg.get("content"):
+            raw_answer = msg["content"]
+            visible_answer_direct, reasoning_direct = _split_thinking(raw_answer)
+
+            if reasoning_direct:
+                yield f"event: status\ndata: {json_mod.dumps({'phase': 'thinking'})}\n\n"
+
+            yield f"event: status\ndata: {json_mod.dumps({'phase': 'answering'})}\n\n"
+            yield f"event: token\ndata: {json_mod.dumps({'token': visible_answer_direct})}\n\n"
+
+            elapsed = round(time.time() - start, 2)
+            reasoning = reasoning_direct
+            visible_answer = visible_answer_direct
+            _skip_streaming = True
+
+        else:
+            yield f"event: token\ndata: {json_mod.dumps({'token': '(No response)'})}\n\n"
+            elapsed = round(time.time() - start, 2)
+            reasoning = None
+            visible_answer = "(No response)"
+            _skip_streaming = True
+
+        # Phase 3: Stream the final answer (either after tool results, or
+        # as the original response if no tools were called)
         full_text = ""
         reasoning_text = ""
         answer_started = False
         sent_thinking_status = False
 
-        # Ollama counts reasoning tokens against max_tokens, so we need
-        # headroom for the model's chain-of-thought before the answer.
-        effective_max = max(req.max_tokens * 4, 8192)
-        llm_payload = {
-            "model": settings.llm_model_name,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": req.temperature,
-            "max_tokens": effective_max,
-            "stream": True,
-        }
+        if not _skip_streaming:
+            # We have tool results in `messages` — now stream the final answer
+            yield f"event: status\ndata: {json_mod.dumps({'phase': 'answering'})}\n\n"
 
-        try:
-            async with httpx.AsyncClient(timeout=settings.llm_timeout) as client:
-                async with client.stream(
-                    "POST",
-                    f"{settings.llm_base_url}/v1/chat/completions",
-                    json=llm_payload,
-                ) as resp:
-                    resp.raise_for_status()
-                    async for line in resp.aiter_lines():
-                        if not line.startswith("data: "):
-                            continue
-                        data_str = line[6:]
-                        if data_str.strip() == "[DONE]":
-                            break
+            try:
+                async with httpx.AsyncClient(timeout=settings.llm_timeout) as client:
+                    async with client.stream(
+                        "POST",
+                        f"{settings.llm_base_url}/v1/chat/completions",
+                        json={
+                            "model": settings.llm_model_name,
+                            "messages": messages,
+                            "temperature": req.temperature,
+                            "max_tokens": effective_max,
+                            "stream": True,
+                        },
+                    ) as resp:
+                        resp.raise_for_status()
+                        async for line in resp.aiter_lines():
+                            if not line.startswith("data: "):
+                                continue
+                            data_str = line[6:]
+                            if data_str.strip() == "[DONE]":
+                                break
 
-                        chunk = json_mod.loads(data_str)
-                        delta = chunk["choices"][0].get("delta", {})
+                            chunk = json_mod.loads(data_str)
+                            delta = chunk["choices"][0].get("delta", {})
 
-                        # Ollama streams thinking in "reasoning" (or "reasoning_content")
-                        reasoning_token = delta.get("reasoning", "") or delta.get("reasoning_content", "")
-                        if reasoning_token:
-                            reasoning_text += reasoning_token
+                            reasoning_token = delta.get("reasoning", "") or delta.get("reasoning_content", "")
+                            if reasoning_token:
+                                reasoning_text += reasoning_token
+                                if not sent_thinking_status:
+                                    sent_thinking_status = True
+                                    yield f"event: status\ndata: {json_mod.dumps({'phase': 'thinking'})}\n\n"
+                                continue
+
+                            token = delta.get("content", "")
+                            if not token:
+                                continue
+
+                            if sent_thinking_status and not answer_started:
+                                answer_started = True
+                                yield f"event: status\ndata: {json_mod.dumps({'phase': 'answering'})}\n\n"
+
+                            full_text += token
+
+                            if answer_started:
+                                yield f"event: token\ndata: {json_mod.dumps({'token': token})}\n\n"
+                                continue
+
+                            if "</think>" in full_text:
+                                answer_started = True
+                                yield f"event: status\ndata: {json_mod.dumps({'phase': 'answering'})}\n\n"
+                                parts = full_text.split("</think>", 1)
+                                reasoning_text = parts[0].replace("<think>", "").strip()
+                                after = parts[1].lstrip() if len(parts) > 1 else ""
+                                full_text = after
+                                if after:
+                                    yield f"event: token\ndata: {json_mod.dumps({'token': after})}\n\n"
+                                continue
+
                             if not sent_thinking_status:
                                 sent_thinking_status = True
                                 yield f"event: status\ndata: {json_mod.dumps({'phase': 'thinking'})}\n\n"
-                            continue
 
-                        token = delta.get("content", "")
-                        if not token:
-                            continue
+            except Exception as e:
+                yield f"event: error\ndata: {json_mod.dumps({'detail': str(e)})}\n\n"
+                return
 
-                        # If we were in thinking phase and now get content,
-                        # transition to answering
-                        if sent_thinking_status and not answer_started:
-                            answer_started = True
-                            yield f"event: status\ndata: {json_mod.dumps({'phase': 'answering'})}\n\n"
+            elapsed = round(time.time() - start, 2)
+            if reasoning_text:
+                visible_answer = full_text.strip()
+                reasoning = reasoning_text.strip()
+            else:
+                visible_answer, reasoning = _split_thinking(full_text)
 
-                        full_text += token
-
-                        if answer_started:
-                            yield f"event: token\ndata: {json_mod.dumps({'token': token})}\n\n"
-                            continue
-
-                        # vLLM-style: <think> tags inline in content
-                        if "</think>" in full_text:
-                            answer_started = True
-                            yield f"event: status\ndata: {json_mod.dumps({'phase': 'answering'})}\n\n"
-                            parts = full_text.split("</think>", 1)
-                            reasoning_text = parts[0].replace("<think>", "").strip()
-                            after = parts[1].lstrip() if len(parts) > 1 else ""
-                            full_text = after
-                            if after:
-                                yield f"event: token\ndata: {json_mod.dumps({'token': after})}\n\n"
-                            continue
-
-                        if not sent_thinking_status:
-                            sent_thinking_status = True
-                            yield f"event: status\ndata: {json_mod.dumps({'phase': 'thinking'})}\n\n"
-
-        except Exception as e:
-            yield f"event: error\ndata: {json_mod.dumps({'detail': str(e)})}\n\n"
-            return
-
-        # Post-processing
-        elapsed = round(time.time() - start, 2)
-        # Use pre-separated reasoning if available (Ollama), else parse tags (vLLM)
-        if reasoning_text:
-            visible_answer = full_text.strip()
-            reasoning = reasoning_text.strip()
-        else:
-            visible_answer, reasoning = _split_thinking(full_text)
+        # Post-processing — visible_answer and reasoning are set by
+        # whichever path executed above (streaming or non-streaming)
         session_id = f"chat-{uuid.uuid4().hex[:12]}"
 
         # Neo4j lineage (best-effort)
@@ -599,14 +883,50 @@ async def chat_stream(req: ChatRequest):
         ]
 
         # Grounding score (best-effort)
+        # When tools were used, compute grounding based on tool success
+        # rather than RAG retrieval quality (which measured the wrong thing).
         grounding_dict = None
         try:
-            grounding = await _compute_grounding(
-                query=req.message,
-                context_docs=context_docs,
-                has_reasoning=reasoning is not None,
-            )
-            grounding_dict = grounding.model_dump()
+            if tool_calls_log:
+                # Tools were called — assess grounding from tool results
+                total_result_bytes = sum(tc.get("result_length", 0) for tc in tool_calls_log)
+                tool_count = len(tool_calls_log)
+                max_round = max(tc.get("round", 1) for tc in tool_calls_log)
+                exhausted_rounds = (max_round >= MAX_TOOL_ROUNDS)
+
+                if total_result_bytes > 500 and not exhausted_rounds:
+                    # Tools returned substantial data and didn't exhaust rounds
+                    tool_score = 0.95
+                    label = "High"
+                    detail = f"Tool-grounded: {tool_count} tool calls returned {total_result_bytes:,} bytes of structured SNOMED data"
+                elif total_result_bytes > 100:
+                    # Tools returned some data but either exhausted rounds or data was thin
+                    tool_score = 0.70
+                    label = "Medium"
+                    detail = f"Partially tool-grounded: {tool_count} tool calls, {total_result_bytes:,} bytes. {'Exhausted tool rounds — answer includes general knowledge.' if exhausted_rounds else ''}"
+                else:
+                    # Tools were called but returned little useful data
+                    tool_score = 0.35
+                    label = "Low"
+                    detail = f"Tools returned minimal data ({total_result_bytes} bytes). Answer relies primarily on general knowledge."
+
+                grounding_dict = {
+                    "overall": tool_score,
+                    "retrieval": 0.0,
+                    "coverage": 0.0,
+                    "diversity": 0.0,
+                    "reasoning": 1.0 if reasoning else 0.0,
+                    "label": label,
+                    "detail": detail,
+                }
+            else:
+                # No tools used — compute RAG grounding as before
+                grounding = await _compute_grounding(
+                    query=req.message,
+                    context_docs=context_docs,
+                    has_reasoning=reasoning is not None,
+                )
+                grounding_dict = grounding.model_dump()
         except Exception as e:
             log.warning("Stream grounding score failed: %s", e)
 
@@ -628,6 +948,7 @@ async def chat_stream(req: ChatRequest):
                 grounding_score=(
                     grounding_dict.get("overall") if grounding_dict else None
                 ),
+                tool_calls=tool_calls_log if tool_calls_log else None,
             )
         except Exception as e:
             log.warning("LLM call logging failed: %s", e)
