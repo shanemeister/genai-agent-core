@@ -310,4 +310,118 @@ async def init_database() -> None:
             ON cms_cc_mcc_codes(designation)
         """)
 
+        # ── CMS Hospital Compare (for peer benchmarking) ──────
+        # Source: https://data.cms.gov/provider-data/dataset/xubh-q36u
+        # File: Hospital_General_Information.csv
+        # One row per Medicare-registered hospital (~5,427 rows) with
+        # demographics, hospital type, ownership, overall rating, and
+        # counts of better/worse/no-different quality measures.
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS cms_hospitals (
+                ccn TEXT PRIMARY KEY,            -- CMS Certification Number (Facility ID)
+                name TEXT NOT NULL,
+                address TEXT,
+                city TEXT,
+                state TEXT,
+                zip TEXT,
+                county TEXT,
+                phone TEXT,
+                hospital_type TEXT,               -- e.g., 'Acute Care Hospitals'
+                ownership TEXT,                   -- Gov/Proprietary/Nonprofit/etc.
+                emergency_services BOOLEAN,
+                birthing_friendly BOOLEAN,
+                overall_rating INTEGER,           -- 1-5 stars, NULL if not rated
+                mort_measures_count INTEGER,
+                mort_better INTEGER,
+                mort_worse INTEGER,
+                safety_measures_count INTEGER,
+                safety_better INTEGER,
+                safety_worse INTEGER,
+                readm_measures_count INTEGER,
+                readm_better INTEGER,
+                readm_worse INTEGER,
+                ptexp_measures_count INTEGER,
+                te_measures_count INTEGER,
+                loaded_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_cms_hospitals_state
+            ON cms_hospitals(state)
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_cms_hospitals_type
+            ON cms_hospitals(hospital_type)
+        """)
+
+        # ── CMS Medicare Inpatient — aggregate by provider ────
+        # Source: Medicare Inpatient Hospitals by Provider (2023 data)
+        # File: MUP_INP_RY25_P04_V10_DY23_Prv.CSV
+        # One row per hospital with Medicare-only totals. Bene_Avg_Risk_Scre
+        # is a proxy for case complexity; actual CMI is computed from the
+        # per-DRG data in cms_hospital_drg_mix.
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS cms_hospital_inpatient_agg (
+                ccn TEXT PRIMARY KEY REFERENCES cms_hospitals(ccn) ON DELETE CASCADE,
+                total_beneficiaries INTEGER,
+                total_discharges INTEGER,
+                total_covered_charges NUMERIC(15, 2),
+                total_payment NUMERIC(15, 2),
+                total_medicare_payment NUMERIC(15, 2),
+                total_covered_days INTEGER,
+                total_days INTEGER,
+                avg_beneficiary_age NUMERIC(6, 2),
+                avg_risk_score NUMERIC(6, 4),     -- CMS HCC risk score
+                pct_heart_failure NUMERIC(5, 4),
+                pct_diabetes NUMERIC(5, 4),
+                pct_ckd NUMERIC(5, 4),
+                pct_copd NUMERIC(5, 4),
+                pct_depression NUMERIC(5, 4),
+                pct_afib NUMERIC(5, 4),
+                pct_stroke NUMERIC(5, 4),
+                data_year INTEGER DEFAULT 2023,
+                loaded_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+
+        # ── CMS Medicare Inpatient — per DRG by provider ──────
+        # Source: Medicare Inpatient Hospitals by Provider and Service
+        # File: MUP_INP_RY25_P03_V10_DY23_PrvSvc.CSV
+        # One row per hospital × DRG (~146,000 rows). Joining this to
+        # cms_drg_weights lets us compute true CMI as the weighted
+        # average of MS-DRG relative weights.
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS cms_hospital_drg_mix (
+                ccn TEXT NOT NULL REFERENCES cms_hospitals(ccn) ON DELETE CASCADE,
+                drg INTEGER NOT NULL,                         -- MS-DRG number
+                drg_description TEXT,
+                discharges INTEGER NOT NULL,
+                avg_covered_charges NUMERIC(15, 2),
+                avg_total_payment NUMERIC(15, 2),
+                avg_medicare_payment NUMERIC(15, 2),
+                data_year INTEGER DEFAULT 2023,
+                loaded_at TIMESTAMPTZ DEFAULT NOW(),
+                PRIMARY KEY (ccn, drg, data_year)
+            )
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_hospital_drg_mix_drg
+            ON cms_hospital_drg_mix(drg)
+        """)
+
+        # ── Computed: CMI per hospital ────────────────────────
+        # Materialized for fast Dashboard lookup. Refreshed whenever the
+        # hospital_drg_mix or drg_weights tables change. Formula:
+        #   CMI = SUM(weight × discharges) / SUM(discharges)
+        # joined on cms_drg_weights for the current fiscal year.
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS cms_hospital_cmi (
+                ccn TEXT PRIMARY KEY REFERENCES cms_hospitals(ccn) ON DELETE CASCADE,
+                cmi NUMERIC(8, 4),                -- Case-Mix Index
+                total_drg_discharges INTEGER,     -- Sum of discharges across all DRGs
+                drg_count INTEGER,                -- Number of distinct DRGs billed
+                computed_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+
         log.info("Database schema initialized")
