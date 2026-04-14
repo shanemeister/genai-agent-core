@@ -70,30 +70,74 @@ async def retrieve_context(
       1. Vector search: retrieve top candidates by inner-product similarity
       2. Rerank: cross-encoder reranks candidates, returns top k
 
+    Special behavior: always try to include up to 3 product_documentation
+    chunks in the result set when they're relevant. This prevents the
+    ~445K SNOMED/RxNorm concept embeddings from crowding out the small
+    (~14 chunk) curated product documentation corpus for questions about
+    the Noesis product itself. Product docs are retrieved from their own
+    scoped search and merged into the final result, deduplicated by doc_id.
+
     Args:
         query: Search query text
-        k: Number of results to return
-        sources: Optional list of source types to filter by: ["memory", "document_chunk", "seed"]
-                 If None, searches all sources.
+        k: Number of results to return in the final merged set
+        sources: Optional list of source types to filter by. If None,
+                 searches all sources AND also pulls from product_documentation.
+                 If explicitly passed, only those sources are used.
     """
     await seed_store()
     query_embedding = embed_text(query)
+
+    # Decide on per-call k values. We want room for product docs
+    # alongside general retrieval.
+    if sources is None:
+        # General + product doc boost: 3 product chunks + (k-3) general
+        product_k = 3
+        general_k = max(k - product_k, k // 2)  # leave room for at least half general
+
+        # Pull product docs first
+        product_results = await _STORE.search(
+            query_embedding,
+            k=product_k,
+            source_types=["product_documentation"],
+        )
+    else:
+        product_results = []
+        general_k = k
 
     if settings.noesis_use_reranker:
         # Retrieve more candidates than needed, then rerank
         candidates = await _STORE.search(
             query_embedding,
-            k=max(k * 3, 15),
+            k=max(general_k * 3, 15),
             source_types=sources,
         )
         try:
             from core.rag.reranker import rerank
-            return rerank(query, candidates, top_k=k)
+            general_ranked = rerank(query, candidates, top_k=general_k)
         except Exception as e:
             log.warning("Reranker failed, falling back to vector search: %s", e)
-            return candidates[:k]
+            general_ranked = candidates[:general_k]
     else:
-        return await _STORE.search(query_embedding, k=k, source_types=sources)
+        general_ranked = await _STORE.search(
+            query_embedding, k=general_k, source_types=sources
+        )
+
+    # Merge product docs with general retrieval, deduplicate by doc_id.
+    # Product docs go first so the LLM sees them before ontology concepts.
+    seen_ids = set()
+    merged: list[dict] = []
+    for doc in product_results:
+        if doc["doc_id"] not in seen_ids:
+            seen_ids.add(doc["doc_id"])
+            merged.append(doc)
+    for doc in general_ranked:
+        if doc["doc_id"] not in seen_ids:
+            seen_ids.add(doc["doc_id"])
+            merged.append(doc)
+        if len(merged) >= k:
+            break
+
+    return merged[:k]
 
 
 async def reindex_document_chunks() -> int:

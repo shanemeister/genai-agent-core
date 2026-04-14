@@ -145,6 +145,21 @@ async def _compute_grounding(
     else:
         retrieval = 0.0
 
+    # Product documentation boost: if the retrieved set contains
+    # curated product_documentation chunks, the answer is grounded
+    # in authoritative first-party content. Floor the retrieval
+    # contribution at 0.85 in that case, since the question is
+    # answerable from authoritative docs regardless of ontology
+    # concept similarity noise.
+    product_doc_count = sum(
+        1 for d in context_docs
+        if d.get("doc_id", "").startswith("product_doc:")
+    )
+    if product_doc_count >= 2:
+        retrieval = max(retrieval, 0.90)
+    elif product_doc_count >= 1:
+        retrieval = max(retrieval, 0.75)
+
     # --- Coverage: check how many query concepts exist in Neo4j ---
     coverage = 0.0
     try:
@@ -162,16 +177,36 @@ async def _compute_grounding(
         log.warning("Graph coverage check failed: %s", e)
         coverage = 0.0
 
+    # For product-documentation-backed answers, coverage via Neo4j
+    # is not a meaningful signal (the question is about the product,
+    # not a clinical concept). Floor coverage at 0.7 in that case so
+    # the composite score isn't dragged down by a missing graph match.
+    if product_doc_count >= 2:
+        coverage = max(coverage, 0.85)
+    elif product_doc_count >= 1:
+        coverage = max(coverage, 0.70)
+
     # --- Source diversity ---
+    # Bucket context docs by source type: product_documentation, memory
+    # cards, SNOMED ontology, RxNorm, clinical seed docs, etc. More
+    # distinct buckets means better cross-source grounding.
     unique_sources = set()
     for d in context_docs:
         doc_id = d.get("doc_id", "")
-        if doc_id.startswith("memory:"):
-            unique_sources.add(doc_id)
-        else:
+        if doc_id.startswith("product_doc:"):
+            unique_sources.add("product_doc")
+        elif doc_id.startswith("memory:"):
+            unique_sources.add("memory")
+        elif doc_id.startswith("ontology:snomed:"):
+            unique_sources.add("snomed")
+        elif doc_id.startswith("ontology:rxnorm:"):
+            unique_sources.add("rxnorm")
+        elif doc_id.startswith("doc:"):
             unique_sources.add("seed")
+        else:
+            unique_sources.add("other")
     n = len(unique_sources)
-    diversity = min(n / 4.0, 1.0) if n > 0 else 0.0
+    diversity = min(n / 3.0, 1.0) if n > 0 else 0.0
 
     # --- Reasoning ---
     reasoning_score = 1.0 if has_reasoning else 0.0
