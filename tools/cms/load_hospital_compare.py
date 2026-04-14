@@ -80,6 +80,45 @@ PCH_COMPLICATIONS_URL = (
 
 DOWNLOAD_DIR = Path("/tmp/cms_hospital_compare")
 
+# ── Facility type classification ──────────────────────────────
+#
+# Maps a Hospital General Information "Hospital Type" string to our
+# facility_type taxonomy. Only 'IPPS' hospitals get MS-DRG CMI
+# calculations. All others get a special-state UI panel explaining
+# why traditional CMI doesn't apply to them.
+#
+# Categories and why they don't get CMI:
+#   IPPS  — Acute Care Hospitals paid under Inpatient PPS. CMI applies.
+#   PCH   — PPS-Exempt Cancer Hospitals. Paid under cost-based system.
+#   CAH   — Critical Access Hospitals. Paid under cost-based reimbursement,
+#           not IPPS; don't get MS-DRG assignments.
+#   PSYCH — Psychiatric facilities. Paid under IPF-PPS (separate weights).
+#   PEDS  — Children's hospitals. Almost no Medicare beneficiaries.
+#   VA    — Veterans Administration hospitals. Federal, not Medicare.
+#   DOD   — Department of Defense hospitals. Federal, not Medicare.
+#   REH   — Rural Emergency Hospital. New (2023) fixed-payment model.
+#   LTCH  — Long-Term Care Hospitals. Paid under LTCH-PPS.
+#   OTHER — Anything else, fallback.
+HOSPITAL_TYPE_TO_FACILITY_TYPE: dict[str, str] = {
+    "Acute Care Hospitals": "IPPS",
+    "Critical Access Hospitals": "CAH",
+    "Psychiatric": "PSYCH",
+    "Childrens": "PEDS",
+    "Acute Care - Veterans Administration": "VA",
+    "Acute Care - Department of Defense": "DOD",
+    "Rural Emergency Hospital": "REH",
+    "Long-term": "LTCH",
+    "PPS-Exempt Cancer Hospital": "PCH",  # set explicitly when we load the PCH list
+}
+
+
+def classify_facility(hospital_type: str | None) -> str:
+    """Map a CMS hospital_type string to our facility_type taxonomy."""
+    if not hospital_type:
+        return "OTHER"
+    return HOSPITAL_TYPE_TO_FACILITY_TYPE.get(hospital_type.strip(), "OTHER")
+
+
 # ── Hospital name aliases ────────────────────────────────────
 #
 # Maps CCN → list of alternate names the facility is publicly known as.
@@ -133,6 +172,21 @@ HOSPITAL_ALIASES: dict[str, list[str]] = {
     "390164": ["UPMC", "UPMC Presbyterian", "UPMC Pittsburgh"],
     # Vanderbilt University Medical Center
     "440039": ["Vanderbilt", "VUMC"],
+
+    # ── Children's hospitals ─────────────────────────────
+    # These don't have CMI (no Medicare patients) but are famous
+    # brand names that CDI Directors will try to search for.
+    "223302": ["Boston Children's", "BCH"],
+    "363300": ["Cincinnati Children's", "Cincinnati Childrens Hospital"],
+    "393303": ["CHOP", "Children's Hospital of Philadelphia"],
+    "053302": ["CHLA", "Children's Hospital Los Angeles"],
+    "453304": ["Texas Children's", "TCH"],
+    "503300": ["Seattle Children's"],
+    "443302": ["St Jude", "St Jude Children's Research Hospital"],
+    "363305": ["Nationwide Children's"],
+    "053305": ["Lucile Packard", "Stanford Children's", "Lucile Packard Children's Hospital"],
+    "143300": ["Lurie Children's", "Ann & Robert Lurie Children's"],
+    "453302": ["Children's Medical Center Dallas", "Children's Dallas"],
 }
 
 
@@ -373,7 +427,11 @@ async def load_hospitals(pool: asyncpg.Pool, rows: list[dict]) -> None:
     async with pool.acquire() as conn:
         await conn.execute("DELETE FROM cms_hospitals")
 
-        # Phase 1: IPPS hospitals (facility_type='IPPS')
+        # Phase 1: All hospitals from Hospital General Information.
+        # facility_type is classified from the hospital_type field so
+        # Critical Access, Psychiatric, Children's, VA, DoD, Rural
+        # Emergency, Long-term, and plain Acute Care hospitals all
+        # get the right designation.
         await conn.executemany(
             """
             INSERT INTO cms_hospitals (
@@ -384,13 +442,14 @@ async def load_hospitals(pool: asyncpg.Pool, rows: list[dict]) -> None:
                 readm_measures_count, readm_better, readm_worse,
                 ptexp_measures_count, te_measures_count
             ) VALUES (
-                $1, $2, 'IPPS', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-                $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+                $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25
             )
             """,
             [
                 (
-                    r["ccn"], r["name"], r["address"], r["city"], r["state"],
+                    r["ccn"], r["name"], classify_facility(r.get("hospital_type")),
+                    r["address"], r["city"], r["state"],
                     r["zip"], r["county"], r["phone"],
                     r["hospital_type"], r["ownership"],
                     r["emergency_services"], r["birthing_friendly"],
@@ -403,7 +462,14 @@ async def load_hospitals(pool: asyncpg.Pool, rows: list[dict]) -> None:
                 for r in rows
             ],
         )
-        log.info("Loaded %d IPPS hospital rows", len(rows))
+
+        # Summary by facility_type for verification
+        type_counts = await conn.fetch(
+            "SELECT facility_type, COUNT(*) FROM cms_hospitals GROUP BY facility_type ORDER BY COUNT(*) DESC"
+        )
+        log.info("Loaded %d hospital rows:", len(rows))
+        for r in type_counts:
+            log.info("  %s: %d", r["facility_type"], r["count"])
 
         # Phase 2: PPS-Exempt Cancer Hospitals
         # These have facility_type='PCH' and get no CMI.
