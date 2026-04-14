@@ -37,6 +37,8 @@ router = APIRouter(prefix="/benchmark", tags=["benchmark"])
 class HospitalSummary(BaseModel):
     ccn: str
     name: str
+    facility_type: Optional[str] = None         # 'IPPS', 'PCH', 'OTHER'
+    also_known_as: Optional[list[str]] = None
     city: Optional[str] = None
     state: Optional[str] = None
     hospital_type: Optional[str] = None
@@ -172,24 +174,47 @@ async def benchmark_info():
 
 @router.get("/hospitals/search", response_model=list[HospitalSummary])
 async def hospital_search(
-    q: str = Query(..., min_length=2, description="Name or CCN substring"),
+    q: str = Query(..., min_length=2, description="Name, alias, or CCN substring"),
     state: Optional[str] = Query(None, description="Two-letter state code"),
     limit: int = Query(20, ge=1, le=100),
 ):
-    """Find hospitals by name or CCN for the Settings / hospital picker.
+    """Find hospitals by name, alias, or CCN for the hospital picker.
 
-    Returns up to `limit` matches, sorted by:
-      1. Exact CCN match first
-      2. Name prefix match next
-      3. Name substring match last
-      4. Within each bucket, by total discharges descending (so larger
-         teaching hospitals surface above small clinics)
+    Search rules:
+      - Exact CCN match → always ranks first
+      - Name prefix match → second
+      - Alias match → second (aliases are curated brand/common names
+        like "Heart Hospital of Austin" → St David's Medical Center,
+        "MD Anderson" → University of Texas MD Anderson Cancer Center)
+      - Name substring match → third
+      - Within each rank, sorted by total discharges descending so
+        larger teaching hospitals surface above small clinics
+
+    Returns facility_type so the UI can render PPS-Exempt Cancer
+    Hospitals with a special state (no CMI, alternative metrics).
     """
     pool = await get_pool()
     search_upper = q.upper().strip()
 
+    # Build the search predicate. We match against:
+    #   1. Hospital name (case-insensitive substring)
+    #   2. CCN (exact)
+    #   3. any entry in also_known_as (case-insensitive substring,
+    #      evaluated via jsonb_array_elements_text + UPPER)
+    #
+    # The alias check is a correlated subquery: for each hospital row,
+    # check whether the JSONB array contains any element that matches
+    # the search term. This is fast on ~5,400 rows because PostgreSQL
+    # short-circuits the WHERE clause.
     where_parts = [
-        "(UPPER(h.name) LIKE $1 OR h.ccn = $2)"
+        """(
+            UPPER(h.name) LIKE $1
+            OR h.ccn = $2
+            OR EXISTS (
+                SELECT 1 FROM jsonb_array_elements_text(h.also_known_as) AS alias
+                WHERE UPPER(alias) LIKE $1
+            )
+        )"""
     ]
     params: list[Any] = [f"%{search_upper}%", search_upper]
 
@@ -203,13 +228,22 @@ async def hospital_search(
         rows = await conn.fetch(
             f"""
             SELECT
-                h.ccn, h.name, h.city, h.state,
+                h.ccn, h.name, h.facility_type,
+                COALESCE(
+                    (SELECT jsonb_agg(a) FROM jsonb_array_elements_text(h.also_known_as) AS a),
+                    '[]'::jsonb
+                ) AS also_known_as_json,
+                h.city, h.state,
                 h.hospital_type, h.ownership, h.overall_rating,
                 c.cmi::float AS cmi,
                 c.total_drg_discharges AS total_discharges,
                 CASE
                     WHEN h.ccn = $2 THEN 0
                     WHEN UPPER(h.name) LIKE $2 || '%' THEN 1
+                    WHEN EXISTS (
+                        SELECT 1 FROM jsonb_array_elements_text(h.also_known_as) AS alias
+                        WHERE UPPER(alias) LIKE $2 || '%'
+                    ) THEN 1
                     ELSE 2
                 END AS match_rank
             FROM cms_hospitals h
@@ -222,7 +256,24 @@ async def hospital_search(
             limit,
         )
 
-    return [HospitalSummary(**{k: v for k, v in dict(r).items() if k != "match_rank"}) for r in rows]
+    results = []
+    for r in rows:
+        d = dict(r)
+        # Flatten jsonb to a list
+        aliases = d.pop("also_known_as_json", None)
+        if aliases and isinstance(aliases, list):
+            d["also_known_as"] = aliases
+        elif aliases:
+            import json as _json
+            try:
+                d["also_known_as"] = _json.loads(aliases) if isinstance(aliases, str) else list(aliases)
+            except Exception:
+                d["also_known_as"] = None
+        else:
+            d["also_known_as"] = None
+        d.pop("match_rank", None)
+        results.append(HospitalSummary(**d))
+    return results
 
 
 @router.get("/hospital/{ccn}", response_model=HospitalBenchmark)
@@ -241,7 +292,12 @@ async def hospital_benchmark(
         hospital_row = await conn.fetchrow(
             """
             SELECT
-                h.ccn, h.name, h.city, h.state,
+                h.ccn, h.name, h.facility_type,
+                COALESCE(
+                    (SELECT jsonb_agg(a) FROM jsonb_array_elements_text(h.also_known_as) AS a),
+                    '[]'::jsonb
+                ) AS also_known_as_json,
+                h.city, h.state,
                 h.hospital_type, h.ownership, h.overall_rating,
                 c.cmi::float AS cmi,
                 c.total_drg_discharges AS total_discharges
@@ -254,7 +310,25 @@ async def hospital_benchmark(
         if not hospital_row:
             raise HTTPException(status_code=404, detail=f"Hospital {ccn} not found")
 
-        hospital = HospitalSummary(**dict(hospital_row))
+        # Coerce JSONB aliases to plain list for the HospitalSummary model.
+        # asyncpg returns JSONB as a str by default, so we parse it.
+        import json as _json
+        h_dict = dict(hospital_row)
+        aliases_raw = h_dict.pop("also_known_as_json", None)
+        if aliases_raw:
+            if isinstance(aliases_raw, list):
+                h_dict["also_known_as"] = aliases_raw
+            elif isinstance(aliases_raw, str):
+                try:
+                    parsed = _json.loads(aliases_raw)
+                    h_dict["also_known_as"] = parsed if isinstance(parsed, list) else None
+                except (ValueError, TypeError):
+                    h_dict["also_known_as"] = None
+            else:
+                h_dict["also_known_as"] = None
+        else:
+            h_dict["also_known_as"] = None
+        hospital = HospitalSummary(**h_dict)
 
         # National peer group (all hospitals with CMI)
         national = await _compute_peer_stats(conn, "", [], "National")

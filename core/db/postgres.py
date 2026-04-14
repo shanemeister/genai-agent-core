@@ -320,6 +320,17 @@ async def init_database() -> None:
             CREATE TABLE IF NOT EXISTS cms_hospitals (
                 ccn TEXT PRIMARY KEY,            -- CMS Certification Number (Facility ID)
                 name TEXT NOT NULL,
+                facility_type TEXT DEFAULT 'IPPS',
+                    -- 'IPPS'    = standard acute care, paid under Inpatient PPS, has CMI
+                    -- 'PCH'     = PPS-Exempt Cancer Hospital (11 in US), not paid under IPPS,
+                    --            NO MS-DRG CMI applies. CMS tracks them on PCH-specific
+                    --            quality metrics (complications, HCAHPS, palliative care).
+                    -- 'OTHER'   = specialty hospitals, long-term care, etc.
+                also_known_as JSONB DEFAULT '[]'::jsonb,
+                    -- Array of alternate names the facility is commonly called by —
+                    -- e.g., "St David's Medical Center" is also "Heart Hospital of Austin".
+                    -- Used by the search endpoint to match public-facing brand names
+                    -- even when the CMS legal name differs.
                 address TEXT,
                 city TEXT,
                 state TEXT,
@@ -345,6 +356,17 @@ async def init_database() -> None:
                 loaded_at TIMESTAMPTZ DEFAULT NOW()
             )
         """)
+        # Idempotent migration for pre-existing cms_hospitals tables
+        # (added when we introduced PCH support)
+        await conn.execute("""
+            ALTER TABLE cms_hospitals
+            ADD COLUMN IF NOT EXISTS facility_type TEXT DEFAULT 'IPPS'
+        """)
+        await conn.execute("""
+            ALTER TABLE cms_hospitals
+            ADD COLUMN IF NOT EXISTS also_known_as JSONB DEFAULT '[]'::jsonb
+        """)
+
         await conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_cms_hospitals_state
             ON cms_hospitals(state)
@@ -352,6 +374,10 @@ async def init_database() -> None:
         await conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_cms_hospitals_type
             ON cms_hospitals(hospital_type)
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_cms_hospitals_facility_type
+            ON cms_hospitals(facility_type)
         """)
 
         # ── CMS Medicare Inpatient — aggregate by provider ────
