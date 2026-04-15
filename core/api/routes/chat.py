@@ -145,19 +145,24 @@ async def _compute_grounding(
     else:
         retrieval = 0.0
 
-    # Product documentation boost: if the retrieved set contains
-    # curated product_documentation chunks, the answer is grounded
-    # in authoritative first-party content. Floor the retrieval
-    # contribution at 0.85 in that case, since the question is
-    # answerable from authoritative docs regardless of ontology
+    # Curated-corpus boost: if the retrieved set contains chunks from
+    # our curated product_documentation or clinical_guideline corpora,
+    # the answer is grounded in authoritative first-party or consensus
+    # clinical content. Floor the retrieval contribution accordingly,
+    # since those chunks are answerable directly regardless of ontology
     # concept similarity noise.
     product_doc_count = sum(
         1 for d in context_docs
         if d.get("doc_id", "").startswith("product_doc:")
     )
-    if product_doc_count >= 2:
+    guideline_count = sum(
+        1 for d in context_docs
+        if d.get("doc_id", "").startswith("clin_guide:")
+    )
+    curated_count = product_doc_count + guideline_count
+    if curated_count >= 2:
         retrieval = max(retrieval, 0.90)
-    elif product_doc_count >= 1:
+    elif curated_count >= 1:
         retrieval = max(retrieval, 0.75)
 
     # --- Coverage: check how many query concepts exist in Neo4j ---
@@ -177,13 +182,14 @@ async def _compute_grounding(
         log.warning("Graph coverage check failed: %s", e)
         coverage = 0.0
 
-    # For product-documentation-backed answers, coverage via Neo4j
-    # is not a meaningful signal (the question is about the product,
-    # not a clinical concept). Floor coverage at 0.7 in that case so
-    # the composite score isn't dragged down by a missing graph match.
-    if product_doc_count >= 2:
+    # For curated-corpus-backed answers (product docs or clinical
+    # guidelines), coverage via Neo4j concept search is not a
+    # meaningful signal — the question is answerable from the
+    # curated text directly. Floor coverage so the composite score
+    # isn't dragged down by a missing graph match.
+    if curated_count >= 2:
         coverage = max(coverage, 0.85)
-    elif product_doc_count >= 1:
+    elif curated_count >= 1:
         coverage = max(coverage, 0.70)
 
     # --- Source diversity ---
@@ -195,6 +201,8 @@ async def _compute_grounding(
         doc_id = d.get("doc_id", "")
         if doc_id.startswith("product_doc:"):
             unique_sources.add("product_doc")
+        elif doc_id.startswith("clin_guide:"):
+            unique_sources.add("clinical_guideline")
         elif doc_id.startswith("memory:"):
             unique_sources.add("memory")
         elif doc_id.startswith("ontology:snomed:"):

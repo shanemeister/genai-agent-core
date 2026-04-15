@@ -199,17 +199,19 @@ async def hospital_search(
     # Build the search predicate. We match against:
     #   1. Hospital name (case-insensitive substring)
     #   2. CCN (exact)
-    #   3. any entry in also_known_as (case-insensitive substring,
-    #      evaluated via jsonb_array_elements_text + UPPER)
+    #   3. any entry in also_known_as (case-insensitive substring)
+    #   4. City (case-insensitive exact or prefix match)
     #
-    # The alias check is a correlated subquery: for each hospital row,
-    # check whether the JSONB array contains any element that matches
-    # the search term. This is fast on ~5,400 rows because PostgreSQL
-    # short-circuits the WHERE clause.
+    # City matching lets a user type "Chicago" to find every Chicago
+    # hospital, or "Houston" to find every Houston hospital. This is
+    # the fastest way to see "peer hospitals in the same metro area"
+    # without requiring zip-code geocoding.
     where_parts = [
         """(
             UPPER(h.name) LIKE $1
             OR h.ccn = $2
+            OR UPPER(h.city) = $2
+            OR UPPER(h.city) LIKE $2 || ' %'
             OR EXISTS (
                 SELECT 1 FROM jsonb_array_elements_text(h.also_known_as) AS alias
                 WHERE UPPER(alias) LIKE $1
@@ -238,13 +240,14 @@ async def hospital_search(
                 c.cmi::float AS cmi,
                 c.total_drg_discharges AS total_discharges,
                 CASE
-                    WHEN h.ccn = $2 THEN 0
-                    WHEN UPPER(h.name) LIKE $2 || '%' THEN 1
+                    WHEN h.ccn = $2 THEN 0                               -- exact CCN
+                    WHEN UPPER(h.name) LIKE $2 || '%' THEN 1             -- name prefix
+                    WHEN UPPER(h.city) = $2 THEN 1                       -- exact city
                     WHEN EXISTS (
                         SELECT 1 FROM jsonb_array_elements_text(h.also_known_as) AS alias
                         WHERE UPPER(alias) LIKE $2 || '%'
-                    ) THEN 1
-                    ELSE 2
+                    ) THEN 1                                             -- alias prefix
+                    ELSE 2                                               -- substring
                 END AS match_rank
             FROM cms_hospitals h
             LEFT JOIN cms_hospital_cmi c ON c.ccn = h.ccn
@@ -430,3 +433,92 @@ async def peer_stats(
 
     async with pool.acquire() as conn:
         return await _compute_peer_stats(conn, where_clause, params, label, min_discharges)
+
+
+@router.get("/peers/nearby", response_model=list[HospitalSummary])
+async def nearby_peers(
+    ccn: str = Query(..., description="Anchor hospital CCN"),
+    scope: str = Query("city", pattern="^(city|state)$",
+                       description="'city' for same-city peers, 'state' for same-state"),
+    limit: int = Query(25, ge=1, le=100),
+    exclude_anchor: bool = Query(True, description="Exclude the anchor hospital from results"),
+):
+    """Return peer hospitals in the same city (or state) as a given hospital.
+
+    Used by the Dashboard's "peer hospitals nearby" drill-down to show a
+    CDI Director the other hospitals in their metro area — a "how do I
+    compare to the hospital down the road?" experience.
+
+    Results are sorted by CMI descending (for IPPS hospitals) with nulls
+    last (for PCH/PEDS/etc.), so the highest-CMI hospital in the city
+    appears first.
+    """
+    pool = await get_pool()
+    import json as _json
+
+    async with pool.acquire() as conn:
+        # Find the anchor hospital to get its city/state
+        anchor = await conn.fetchrow(
+            "SELECT ccn, city, state FROM cms_hospitals WHERE ccn = $1",
+            ccn,
+        )
+        if not anchor:
+            raise HTTPException(status_code=404, detail=f"Hospital {ccn} not found")
+
+        if scope == "city":
+            if not anchor["city"]:
+                return []
+            where = "h.city = $1 AND h.state = $2"
+            params: list[Any] = [anchor["city"], anchor["state"]]
+        else:  # state
+            if not anchor["state"]:
+                return []
+            where = "h.state = $1"
+            params = [anchor["state"]]
+
+        exclude_sql = f"AND h.ccn != ${len(params) + 1}" if exclude_anchor else ""
+        if exclude_anchor:
+            params.append(ccn)
+
+        params.append(limit)
+        limit_param = f"${len(params)}"
+
+        rows = await conn.fetch(
+            f"""
+            SELECT
+                h.ccn, h.name, h.facility_type,
+                COALESCE(
+                    (SELECT jsonb_agg(a) FROM jsonb_array_elements_text(h.also_known_as) AS a),
+                    '[]'::jsonb
+                ) AS also_known_as_json,
+                h.city, h.state, h.hospital_type, h.ownership, h.overall_rating,
+                c.cmi::float AS cmi,
+                c.total_drg_discharges AS total_discharges
+            FROM cms_hospitals h
+            LEFT JOIN cms_hospital_cmi c ON c.ccn = h.ccn
+            WHERE {where} {exclude_sql}
+            ORDER BY c.cmi DESC NULLS LAST, c.total_drg_discharges DESC NULLS LAST, h.name
+            LIMIT {limit_param}
+            """,
+            *params,
+        )
+
+    results = []
+    for r in rows:
+        d = dict(r)
+        aliases_raw = d.pop("also_known_as_json", None)
+        if aliases_raw:
+            if isinstance(aliases_raw, list):
+                d["also_known_as"] = aliases_raw
+            elif isinstance(aliases_raw, str):
+                try:
+                    parsed = _json.loads(aliases_raw)
+                    d["also_known_as"] = parsed if isinstance(parsed, list) else None
+                except (ValueError, TypeError):
+                    d["also_known_as"] = None
+            else:
+                d["also_known_as"] = None
+        else:
+            d["also_known_as"] = None
+        results.append(HospitalSummary(**d))
+    return results

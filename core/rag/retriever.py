@@ -70,38 +70,48 @@ async def retrieve_context(
       1. Vector search: retrieve top candidates by inner-product similarity
       2. Rerank: cross-encoder reranks candidates, returns top k
 
-    Special behavior: always try to include up to 3 product_documentation
-    chunks in the result set when they're relevant. This prevents the
-    ~445K SNOMED/RxNorm concept embeddings from crowding out the small
-    (~14 chunk) curated product documentation corpus for questions about
-    the Noesis product itself. Product docs are retrieved from their own
-    scoped search and merged into the final result, deduplicated by doc_id.
+    Special behavior: always try to include up to 2 product_documentation
+    chunks AND up to 2 clinical_guideline chunks in the result set. This
+    prevents the ~445K SNOMED/RxNorm concept embeddings from crowding out
+    the small curated corpora (~14 product doc chunks, ~12 clinical
+    guideline chunks) for questions about the Noesis product or about
+    clinical topics like sepsis, heart failure staging, CDI query
+    compliance, and MS-DRG coding. Curated chunks are retrieved from
+    their own scoped searches and merged into the final result,
+    deduplicated by doc_id.
 
     Args:
         query: Search query text
         k: Number of results to return in the final merged set
         sources: Optional list of source types to filter by. If None,
-                 searches all sources AND also pulls from product_documentation.
+                 searches all sources AND also pulls from the curated
+                 product_documentation and clinical_guideline corpora.
                  If explicitly passed, only those sources are used.
     """
     await seed_store()
     query_embedding = embed_text(query)
 
-    # Decide on per-call k values. We want room for product docs
-    # alongside general retrieval.
+    # Decide on per-call k values. We want room for curated chunks
+    # (product docs + clinical guidelines) alongside general retrieval.
     if sources is None:
-        # General + product doc boost: 3 product chunks + (k-3) general
-        product_k = 3
-        general_k = max(k - product_k, k // 2)  # leave room for at least half general
+        # General + curated boost: 2 product + 2 clinical guideline + (k-4) general
+        product_k = 2
+        guideline_k = 2
+        general_k = max(k - product_k - guideline_k, k // 2)
 
-        # Pull product docs first
         product_results = await _STORE.search(
             query_embedding,
             k=product_k,
             source_types=["product_documentation"],
         )
+        guideline_results = await _STORE.search(
+            query_embedding,
+            k=guideline_k,
+            source_types=["clinical_guideline"],
+        )
     else:
         product_results = []
+        guideline_results = []
         general_k = k
 
     if settings.noesis_use_reranker:
@@ -122,11 +132,16 @@ async def retrieve_context(
             query_embedding, k=general_k, source_types=sources
         )
 
-    # Merge product docs with general retrieval, deduplicate by doc_id.
-    # Product docs go first so the LLM sees them before ontology concepts.
+    # Merge curated sources with general retrieval, deduplicate by doc_id.
+    # Curated chunks (product + clinical guidelines) go first so the LLM
+    # sees them before ontology concepts.
     seen_ids = set()
     merged: list[dict] = []
     for doc in product_results:
+        if doc["doc_id"] not in seen_ids:
+            seen_ids.add(doc["doc_id"])
+            merged.append(doc)
+    for doc in guideline_results:
         if doc["doc_id"] not in seen_ids:
             seen_ids.add(doc["doc_id"])
             merged.append(doc)
