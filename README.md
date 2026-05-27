@@ -1,5 +1,10 @@
 # 🧠 GenAI Agent Core — RAG Pipeline with Mixtral, LLaMA3, and OpenAI
 
+![CI](https://github.com/shanemeister/genai-agent-core/actions/workflows/ci.yml/badge.svg)
+
+CI: see [.github/workflows/ci.yml](.github/workflows/ci.yml). Currently a stub workflow (real pytest job blocked on NOES-54). Branch protection on `main` requires CI pass before merge — admin (rsync deploy) can still push directly.
+
+
 This project implements a production-ready Retrieval-Augmented Generation (RAG) assistant using **LangChain**, **FAISS**, and three model options: **Mixtral (GGUF)**, **LLaMA3 (Hugging Face Transformers)**, and **GPT-4o (OpenAI)**. It supports both CLI and FastAPI interfaces for real-time question answering over embedded documents.
 
 ⚠️ Note: This is a continuous work in progress as time allows. Please check back frequently for update. 
