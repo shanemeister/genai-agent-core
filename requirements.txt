@@ -73,7 +73,7 @@ nvidia-nvtx-cu12==12.1.105
 opencv-python==4.13.0.92
 orjson==3.11.7
 ormsgpack==1.12.2
-packaging @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_packaging_1769093650/work
+packaging>=21.0
 pathspec==1.0.4
 pdfminer.six==20251230
 pgvector==0.4.2
