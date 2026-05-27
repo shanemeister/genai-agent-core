@@ -310,6 +310,52 @@ async def init_database() -> None:
             ON cms_cc_mcc_codes(designation)
         """)
 
+        # ── CMS Hospital-Acquired Condition (HAC) categories ──
+        # Source: MS-DRG Definitions Manual Appendix I (FY2026 v43.1)
+        # Loaded by tools/cms/load_hac_data.py (NOES-23b).
+        # Stable across fiscal years; 14 canonical categories per CMS.
+        # See docs/architecture/poa_hac_safety_layer.md §3.1.
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS cms_hac_categories (
+                hac_number   INTEGER PRIMARY KEY,        -- 1..14 (canonical CMS numbering)
+                title        TEXT NOT NULL,
+                description  TEXT,
+                created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+
+        # ── CMS HAC ICD-10 code list ──────────────────────────
+        # One row per (HAC category, ICD-10 code, code_role, fiscal year).
+        # code_role distinguishes the diagnosis code that IS the HAC ('primary')
+        # from procedure context codes that gate conditional HACs like
+        # DVT/PE post-orthopedic or the four SSI categories ('qualifying').
+        # Re-loadable per FY without destroying history.
+        # See docs/architecture/poa_hac_safety_layer.md §3.2.
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS cms_hac_codes (
+                id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                hac_number    INTEGER NOT NULL REFERENCES cms_hac_categories(hac_number),
+                icd10_code    VARCHAR(16) NOT NULL,
+                code_role     VARCHAR(16) NOT NULL,
+                CHECK (code_role IN ('primary','qualifying')),
+                fy            VARCHAR(8) NOT NULL,        -- e.g. 'FY2026'
+                manual_version VARCHAR(16) NOT NULL,      -- e.g. 'v43.1'
+                created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                UNIQUE(hac_number, icd10_code, code_role, fy)
+            )
+        """)
+        # Lookup index for the grouper's is_hac_excluded helper (NOES-23e).
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_hac_codes_lookup
+            ON cms_hac_codes(icd10_code, fy)
+            WHERE code_role = 'primary'
+        """)
+        # Reverse lookup for the qualifying-procedure check on conditional HACs.
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_hac_codes_by_hac
+            ON cms_hac_codes(hac_number, fy)
+        """)
+
         # ── CMS Hospital Compare (for peer benchmarking) ──────
         # Source: https://data.cms.gov/provider-data/dataset/xubh-q36u
         # File: Hospital_General_Information.csv
