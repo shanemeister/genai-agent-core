@@ -7,13 +7,13 @@ Three source files from CMS (all free and public, updated quarterly/annually):
      One row per Medicare-registered hospital (~5,427 rows) with demographics,
      hospital type, ownership, and overall rating.
 
-  2. MUP_INP_RY25_P04_V10_DY23_Prv.CSV
+  2. MUP_INP_RY26_P04_V10_DY24_Prv.CSV (lowercased)
      https://data.cms.gov/data-api/v1/dataset/ee6fb1a5-39b9-46b3-a980-a7284551a732
-     "Medicare Inpatient Hospitals by Provider" (2023 data year, 2025 release)
+     "Medicare Inpatient Hospitals by Provider" (2024 data year, 2026 release)
      One row per hospital with Medicare-only aggregates (discharges, payments,
      avg risk score, chronic condition percentages).
 
-  3. MUP_INP_RY25_P03_V10_DY23_PrvSvc.CSV
+  3. MUP_INP_RY26_P03_V10_DY24_PrvSvc.CSV
      https://data.cms.gov/data-api/v1/dataset/690ddc6c-2767-4618-b277-420ffb2bf27c
      "Medicare Inpatient Hospitals by Provider and Service"
      One row per hospital × DRG (~146,000 rows). Joining this to
@@ -57,15 +57,15 @@ logging.basicConfig(
 
 HOSPITAL_GENERAL_URL = (
     "https://data.cms.gov/provider-data/sites/default/files/resources/"
-    "893c372430d9d71a1c52737d01239d47_1770163599/Hospital_General_Information.csv"
+    "893c372430d9d71a1c52737d01239d47_1777413958/Hospital_General_Information.csv"
 )
 INPATIENT_BY_PROVIDER_URL = (
-    "https://data.cms.gov/sites/default/files/2025-05/"
-    "10e4b7e9-40c5-437b-b4d6-61801b6681f2/MUP_INP_RY25_P04_V10_DY23_Prv.CSV"
+    "https://data.cms.gov/sites/default/files/2026-04/"
+    "d9525c59-002b-45b3-af22-c81061a62dcd/mup_inp_ry26_p04_v10_dy24_prv.csv"
 )
 INPATIENT_BY_PROVIDER_SERVICE_URL = (
-    "https://data.cms.gov/sites/default/files/2025-05/"
-    "ca1c9013-8c7c-4560-a4a1-28cf7e43ccc8/MUP_INP_RY25_P03_V10_DY23_PrvSvc.CSV"
+    "https://data.cms.gov/sites/default/files/2026-04/"
+    "828defb5-c9e6-4442-8c1b-f27bc0799daf/MUP_INP_RY26_P03_V10_DY24_PrvSvc.CSV"
 )
 
 # PPS-Exempt Cancer Hospitals are NOT in Hospital_General_Information
@@ -74,7 +74,7 @@ INPATIENT_BY_PROVIDER_SERVICE_URL = (
 # PCH Quality Reporting dataset instead.
 PCH_COMPLICATIONS_URL = (
     "https://data.cms.gov/provider-data/sites/default/files/resources/"
-    "bc386a698d7a9b8d09bf37a73371a899_1770163601/"
+    "bc386a698d7a9b8d09bf37a73371a899_1776974804/"
     "PCH_Complications_Unplanned_Hospital_Visits_HOSPITAL.csv"
 )
 
