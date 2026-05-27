@@ -17,7 +17,7 @@ cryptography==46.0.4
 dataclasses-json==0.6.7
 diskcache==5.6.3
 einops==0.8.2
-faiss==1.9.0
+faiss-cpu>=1.7.0
 fastapi==0.128.4
 filelock==3.20.3
 frozenlist==1.8.0
