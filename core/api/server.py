@@ -34,6 +34,7 @@ from core.api.routes.validation import router as validation_router
 from core.api.routes.rules import router as rules_router
 from core.api.routes.drg import router as drg_router
 from core.api.routes.benchmark import router as benchmark_router
+from core.api.routes.generate import router as generate_router
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -70,6 +71,7 @@ app.include_router(validation_router)
 app.include_router(rules_router)
 app.include_router(drg_router)
 app.include_router(benchmark_router)
+app.include_router(generate_router)
 
 # Startup readiness — tracks which subsystems initialized successfully
 _ready: dict[str, bool] = {

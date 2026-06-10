@@ -1,0 +1,17 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../diagramloom"
+		},
+		{
+			"path": "../noesis-gateway"
+		},
+		{
+			"path": "../genai-workshop"
+		}
+	],
+	"settings": {}
+}

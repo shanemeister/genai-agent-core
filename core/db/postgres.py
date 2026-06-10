@@ -481,19 +481,83 @@ async def init_database() -> None:
             ON cms_hospital_drg_mix(drg)
         """)
 
-        # ── Computed: CMI per hospital ────────────────────────
-        # Materialized for fast Dashboard lookup. Refreshed whenever the
-        # hospital_drg_mix or drg_weights tables change. Formula:
+        # ── Computed: CMI per hospital, per data year ─────────
+        # History table keyed on (ccn, data_year). The loader writes
+        # one row per (hospital, CY) so successive annual refreshes
+        # build up a time series instead of overwriting the prior year.
         #   CMI = SUM(weight × discharges) / SUM(discharges)
-        # joined on cms_drg_weights for the current fiscal year.
+        # joined on cms_drg_weights for the matching fiscal year.
+        # `cms_hospital_cmi` (below) is a view of the latest year for
+        # backward compatibility — existing queries don't need to change.
         await conn.execute("""
-            CREATE TABLE IF NOT EXISTS cms_hospital_cmi (
-                ccn TEXT PRIMARY KEY REFERENCES cms_hospitals(ccn) ON DELETE CASCADE,
-                cmi NUMERIC(8, 4),                -- Case-Mix Index
-                total_drg_discharges INTEGER,     -- Sum of discharges across all DRGs
-                drg_count INTEGER,                -- Number of distinct DRGs billed
-                computed_at TIMESTAMPTZ DEFAULT NOW()
+            CREATE TABLE IF NOT EXISTS cms_hospital_cmi_history (
+                ccn                  TEXT NOT NULL REFERENCES cms_hospitals(ccn) ON DELETE CASCADE,
+                data_year            INTEGER NOT NULL,
+                cmi                  NUMERIC(8, 4),
+                total_drg_discharges INTEGER,
+                drg_count            INTEGER,
+                computed_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                PRIMARY KEY (ccn, data_year)
             )
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_cmi_history_year
+            ON cms_hospital_cmi_history(data_year)
+        """)
+        # Migrate any legacy table on first run, then drop it so the view
+        # name is free. `cms_hospital_cmi` becomes a view of the latest year.
+        legacy_is_table = await conn.fetchval("""
+            SELECT EXISTS (
+                SELECT 1 FROM information_schema.tables
+                WHERE table_schema = 'public'
+                  AND table_name = 'cms_hospital_cmi'
+                  AND table_type = 'BASE TABLE'
+            )
+        """)
+        if legacy_is_table:
+            # Backfill the legacy single-vintage table into history. The
+            # year is sourced from whichever CY is actually loaded in
+            # cms_hospital_drg_mix — that's the data the CMI was computed
+            # from. If multiple years are loaded we can't tell which one
+            # the legacy table corresponds to, so we refuse and bail.
+            years = await conn.fetch(
+                "SELECT DISTINCT data_year FROM cms_hospital_drg_mix ORDER BY data_year"
+            )
+            year_list = [r["data_year"] for r in years]
+            if len(year_list) == 0:
+                # No drg_mix to anchor against — nothing to migrate cleanly.
+                # Drop the legacy table; the next loader run will populate
+                # history from scratch.
+                await conn.execute("DROP TABLE cms_hospital_cmi")
+            elif len(year_list) == 1:
+                legacy_year = year_list[0]
+                await conn.execute(
+                    """
+                    INSERT INTO cms_hospital_cmi_history
+                        (ccn, data_year, cmi, total_drg_discharges, drg_count, computed_at)
+                    SELECT ccn, $1, cmi, total_drg_discharges, drg_count, computed_at
+                    FROM cms_hospital_cmi
+                    ON CONFLICT (ccn, data_year) DO NOTHING
+                    """,
+                    legacy_year,
+                )
+                await conn.execute("DROP TABLE cms_hospital_cmi")
+                log.info(
+                    "Migrated legacy cms_hospital_cmi → cms_hospital_cmi_history (data_year=%d)",
+                    legacy_year,
+                )
+            else:
+                raise RuntimeError(
+                    "Cannot migrate cms_hospital_cmi → history automatically: "
+                    f"cms_hospital_drg_mix contains multiple years {year_list}. "
+                    "Drop cms_hospital_cmi manually if it's already stale, or "
+                    "re-run the loader to repopulate history fresh."
+                )
+        await conn.execute("""
+            CREATE OR REPLACE VIEW cms_hospital_cmi AS
+            SELECT ccn, cmi, total_drg_discharges, drg_count, computed_at
+            FROM cms_hospital_cmi_history
+            WHERE data_year = (SELECT MAX(data_year) FROM cms_hospital_cmi_history)
         """)
 
         log.info("Database schema initialized")

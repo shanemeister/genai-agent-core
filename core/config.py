@@ -16,7 +16,7 @@ Usage:
 from __future__ import annotations
 
 from pydantic_settings import BaseSettings
-from pydantic import Field
+from pydantic import Field, SecretStr
 
 
 class Settings(BaseSettings):
@@ -54,6 +54,16 @@ class Settings(BaseSettings):
 
     # ── Vision Model ────────────────────────────────────────────
     noesis_vision_model: str = "microsoft/Florence-2-large"
+
+    # ── Requirements → Model generator (Agent Atlas DIAG-37) ────
+    # Cloud model used ONLY for the non-PHI architecture-reasoning task of turning
+    # a requirements doc into a first-cut Agent Atlas model. NOT for any clinical
+    # work — that stays on local inference. Key lives in .env (untracked), read
+    # here as a SecretStr; never logged, never sent to the browser.
+    anthropic_api_key: SecretStr = SecretStr("")
+    model_gen_model: str = "claude-sonnet-4-6"   # mid-tier: strong enough, cheap; swappable
+    model_gen_max_tokens: int = 8000             # cap response size (cost control)
+    model_gen_enabled: bool = True               # hard off-switch for the cloud route
 
     # ── Document Ingestion ──────────────────────────────────────
     chunk_size: int = 2000

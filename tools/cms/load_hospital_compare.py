@@ -627,26 +627,43 @@ async def load_drg_mix(pool: asyncpg.Pool, rows: list[dict]) -> int:
 
 
 async def compute_cmi(pool: asyncpg.Pool) -> None:
-    """Compute CMI per hospital by joining drg_mix to drg_weights.
+    """Compute CMI per hospital per data_year and upsert into history.
 
     CMI = SUM(weight × discharges) / SUM(discharges)
     using cms_drg_weights.weight_capped for the current fiscal year.
+
+    Writes to cms_hospital_cmi_history keyed on (ccn, data_year). The
+    legacy cms_hospital_cmi name is a view over the latest year (see
+    core/db/postgres.py init_schema), so existing callers continue to
+    work unchanged. Running for an already-loaded year refreshes that
+    year's row in place via ON CONFLICT.
     """
     async with pool.acquire() as conn:
-        await conn.execute("DELETE FROM cms_hospital_cmi")
         await conn.execute("""
-            INSERT INTO cms_hospital_cmi (ccn, cmi, total_drg_discharges, drg_count)
+            INSERT INTO cms_hospital_cmi_history
+                (ccn, data_year, cmi, total_drg_discharges, drg_count, computed_at)
             SELECT
                 m.ccn,
+                m.data_year,
                 SUM(d.weight_capped * m.discharges) / NULLIF(SUM(m.discharges), 0) AS cmi,
                 SUM(m.discharges) AS total_drg_discharges,
-                COUNT(DISTINCT m.drg) AS drg_count
+                COUNT(DISTINCT m.drg) AS drg_count,
+                NOW()
             FROM cms_hospital_drg_mix m
             JOIN cms_drg_weights d ON d.drg = m.drg AND d.fiscal_year = 2025
-            GROUP BY m.ccn
+            GROUP BY m.ccn, m.data_year
+            ON CONFLICT (ccn, data_year) DO UPDATE SET
+                cmi                  = EXCLUDED.cmi,
+                total_drg_discharges = EXCLUDED.total_drg_discharges,
+                drg_count            = EXCLUDED.drg_count,
+                computed_at          = NOW()
         """)
-        count = await conn.fetchval("SELECT COUNT(*) FROM cms_hospital_cmi")
-    log.info("Computed CMI for %d hospitals", count)
+        by_year = await conn.fetch(
+            "SELECT data_year, COUNT(*) AS n FROM cms_hospital_cmi_history "
+            "GROUP BY data_year ORDER BY data_year"
+        )
+    for r in by_year:
+        log.info("Computed CMI for %d hospitals (data_year=%d)", r["n"], r["data_year"])
 
 
 # ── Verification ─────────────────────────────────────────────
