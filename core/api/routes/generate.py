@@ -17,11 +17,15 @@ ratifies it. We do not pretend it's authoritative (intent isn't fully in the doc
 
 from __future__ import annotations
 
+import asyncio
 import json as json_mod
 import logging
+import time
+import uuid
 
 import httpx
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from core.config import settings
@@ -37,6 +41,25 @@ ANTHROPIC_VERSION = "2023-06-01"
 class GenerateRequest(BaseModel):
     requirements: str
     options: dict | None = None
+
+
+# ── Async job store ─────────────────────────────────────────────────────────
+# A full-doc generation takes ~2-3 minutes — longer than a WebKit/Tauri webview
+# will hold a single fetch open (~60s), so the studio can't wait on one request.
+# Instead POST enqueues a job and returns immediately; the studio polls GET
+# /generate-model/{id} (fast calls, never near the webview cap) until it's done.
+# Single-process uvicorn → a plain in-memory dict is sufficient; jobs are
+# ephemeral (a draft you either apply or regenerate) so no persistence is needed.
+_JOBS: dict[str, dict] = {}
+_JOB_TTL_SECONDS = 3600  # reap finished jobs after an hour so the dict can't grow unbounded
+
+
+def _reap_jobs() -> None:
+    now = time.monotonic()
+    stale = [jid for jid, j in _JOBS.items()
+             if j.get("status") in ("done", "error") and now - j.get("finished_at", now) > _JOB_TTL_SECONDS]
+    for jid in stale:
+        _JOBS.pop(jid, None)
 
 
 # The contract + rules the model must follow. Kept verbatim-strict so the output
@@ -88,15 +111,60 @@ say so explicitly in `notes`.
 
 @router.post("/generate-model")
 async def generate_model(req: GenerateRequest):
+    """Enqueue a generation job and return its id immediately (202).
+
+    The studio polls GET /generate-model/{job_id} for the result. We return fast so
+    the webview's request timeout never trips on the multi-minute Claude call.
+    """
     if not settings.model_gen_enabled:
         raise HTTPException(status_code=503, detail="Model generation is disabled on this server.")
-    key = settings.anthropic_api_key.get_secret_value()
-    if not key:
+    if not settings.anthropic_api_key.get_secret_value():
         raise HTTPException(status_code=503, detail="No ANTHROPIC_API_KEY configured on the server.")
     text = (req.requirements or "").strip()
     if not text:
         raise HTTPException(status_code=400, detail="Empty requirements.")
 
+    _reap_jobs()
+    job_id = uuid.uuid4().hex
+    _JOBS[job_id] = {"status": "pending", "started_at": time.monotonic()}
+    asyncio.create_task(_run_job(job_id, text))
+    log.info("generate-model: enqueued job %s (%d chars)", job_id, len(text))
+    # 202 Accepted + job id → the studio knows to poll. (A synchronous adopter
+    # backend would return 200 with {model,notes} instead; the studio handles both.)
+    return JSONResponse(status_code=202, content={"job_id": job_id, "status": "pending"})
+
+
+@router.get("/generate-model/{job_id}")
+async def generate_model_status(job_id: str):
+    """Poll a generation job. Returns {status, model?, notes?, error?}."""
+    job = _JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Unknown or expired job id.")
+    if job["status"] == "pending":
+        return {"status": "pending"}
+    if job["status"] == "error":
+        return {"status": "error", "error": job.get("error", "Generation failed.")}
+    return {"status": "done", "model": job["model"], "notes": job["notes"]}
+
+
+async def _run_job(job_id: str, text: str) -> None:
+    """Background worker: run the generation and stash the result on the job."""
+    try:
+        model, notes = await _generate(text)
+        _JOBS[job_id] = {"status": "done", "model": model, "notes": notes, "finished_at": time.monotonic()}
+        log.info("generate-model: job %s done (%d objects)", job_id, len((model or {}).get("objects", {})))
+    except HTTPException as exc:
+        _JOBS[job_id] = {"status": "error", "error": str(exc.detail), "finished_at": time.monotonic()}
+        log.error("generate-model: job %s failed: %s", job_id, exc.detail)
+    except Exception as exc:  # never let a worker crash silently
+        _JOBS[job_id] = {"status": "error", "error": f"Unexpected error: {type(exc).__name__}", "finished_at": time.monotonic()}
+        log.error("generate-model: job %s crashed: %s", job_id, exc, exc_info=True)
+
+
+async def _generate(text: str) -> tuple[dict, list[str]]:
+    """The actual Claude call + parse. Returns (model, notes). Raises HTTPException
+    on upstream/timeout errors; degrades to an empty-but-valid model on parse failure."""
+    key = settings.anthropic_api_key.get_secret_value()
     payload = {
         "model": settings.model_gen_model,
         "max_tokens": settings.model_gen_max_tokens,
@@ -136,14 +204,14 @@ async def generate_model(req: GenerateRequest):
                "raise MODEL_GEN_MAX_TOKENS or shorten the requirements."
                if truncated else
                "The generator did not return valid model JSON; nothing was applied. Try again.")
-        return {"model": {"objects": {}, "edges": [], "subjectAreas": []}, "notes": [msg]}
+        return {"objects": {}, "edges": [], "subjectAreas": []}, [msg]
 
     model = parsed.get("model", parsed)
     notes = parsed.get("notes", []) if isinstance(parsed.get("notes"), list) else []
     if truncated:
         notes.append("⚠ The response was truncated at the token limit — the model may be incomplete. "
                      "Raise MODEL_GEN_MAX_TOKENS and regenerate for a full model.")
-    return {"model": model, "notes": notes}
+    return model, notes
 
 
 def _strip_fences(s: str) -> str:
