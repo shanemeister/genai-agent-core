@@ -73,6 +73,16 @@ Rules:
 - edges connect an agent to the tools/jobs/routers/systems it uses (source=agent id, target=the used object id).
 - Keep agents single-responsibility (no "and" in the responsibility).
 - Prefer a complete, valid skeleton over guessed detail. Put assumptions in `notes`.
+
+COMPLETENESS — this is critical. Model EVERYTHING the document describes; do not summarize \
+or omit. Walk the document and create an object for every stage/task, every agent, every \
+tool, every system (every named source AND target), every job, and every router it mentions \
+— even if it lists many similar ones (e.g. multiple source databases or target platforms, \
+model each as its own system). If the document names six pipeline stages, your model has six \
+tasks; if it names eight systems, your model has eight systems. Dropping or merging items the \
+document calls out is a failure. Before finishing, re-read the document and confirm each \
+named element appears in your model; if you had to leave something out (e.g. to fit length), \
+say so explicitly in `notes`.
 """
 
 
@@ -99,12 +109,14 @@ async def generate_model(req: GenerateRequest):
         "content-type": "application/json",
     }
 
+    # A full model (40-50 objects) can take a few minutes to generate, so give the
+    # upstream call generous headroom — far longer than the small-doc case needs.
     try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(settings.model_gen_timeout, connect=15.0)) as client:
             resp = await client.post(ANTHROPIC_URL, headers=headers, json=payload)
     except httpx.HTTPError as exc:
         log.error("generate-model: upstream request failed: %s", exc)
-        raise HTTPException(status_code=502, detail="Could not reach the model provider.")
+        raise HTTPException(status_code=504, detail=f"The model provider did not respond in time ({type(exc).__name__}). Try a shorter requirements doc or raise MODEL_GEN_TIMEOUT.")
 
     if resp.status_code != 200:
         # Don't leak the key; surface a trimmed upstream message.
@@ -113,18 +125,24 @@ async def generate_model(req: GenerateRequest):
         raise HTTPException(status_code=502, detail=f"Model provider error ({resp.status_code}).")
 
     data = resp.json()
+    truncated = data.get("stop_reason") == "max_tokens"  # ran out of output budget
     # Anthropic Messages API: content is a list of blocks; take the text.
     try:
         out_text = "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text")
         parsed = json_mod.loads(_strip_fences(out_text))
     except (ValueError, AttributeError) as exc:
-        log.error("generate-model: could not parse model JSON: %s", exc)
-        # Return an empty-but-valid envelope so the studio degrades gracefully.
-        return {"model": {"objects": {}, "edges": [], "subjectAreas": []},
-                "notes": ["The generator did not return valid model JSON; nothing was applied. Try again or simplify the requirements."]}
+        log.error("generate-model: could not parse model JSON (truncated=%s): %s", truncated, exc)
+        msg = ("The model response was cut off (hit the token limit) before valid JSON completed — "
+               "raise MODEL_GEN_MAX_TOKENS or shorten the requirements."
+               if truncated else
+               "The generator did not return valid model JSON; nothing was applied. Try again.")
+        return {"model": {"objects": {}, "edges": [], "subjectAreas": []}, "notes": [msg]}
 
     model = parsed.get("model", parsed)
     notes = parsed.get("notes", []) if isinstance(parsed.get("notes"), list) else []
+    if truncated:
+        notes.append("⚠ The response was truncated at the token limit — the model may be incomplete. "
+                     "Raise MODEL_GEN_MAX_TOKENS and regenerate for a full model.")
     return {"model": model, "notes": notes}
 
 

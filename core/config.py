@@ -62,7 +62,8 @@ class Settings(BaseSettings):
     # here as a SecretStr; never logged, never sent to the browser.
     anthropic_api_key: SecretStr = SecretStr("")
     model_gen_model: str = "claude-sonnet-4-6"   # mid-tier: strong enough, cheap; swappable
-    model_gen_max_tokens: int = 8000             # cap response size (cost control)
+    model_gen_max_tokens: int = 16000            # headroom for a full model (~50 objects of JSON)
+    model_gen_timeout: float = 300.0             # upstream call budget; a full model can take minutes
     model_gen_enabled: bool = True               # hard off-switch for the cloud route
 
     # ── Document Ingestion ──────────────────────────────────────
