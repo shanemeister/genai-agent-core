@@ -30,7 +30,14 @@ class ClinicalConcept(BaseModel):
 
 
 class MappedConcept(BaseModel):
-    """A clinical concept mapped to a SNOMED CT or RxNorm code."""
+    """A clinical concept mapped to a SNOMED CT or RxNorm code.
+
+    Governance (registry: snomed-mapper.agent.yaml): when the mapping confidence
+    falls below the agent's grounding threshold, the mapper does not emit a
+    low-confidence code. Instead it refuses — ``refused`` is True, the code
+    fields are left empty, and the concept is escalated to the human-approval
+    path (``escalation_to``). ``refusal_reason`` records why, PHI-free.
+    """
     concept: ClinicalConcept
     sctid: str | None = None
     snomed_term: str | None = None
@@ -39,6 +46,17 @@ class MappedConcept(BaseModel):
     icd10_codes: List[str] = Field(default_factory=list)
     rxcui: str | None = None
     source_ontology: str = "snomed"  # "snomed" or "rxnorm"
+    # Provenance of the confidence (trust-as-infrastructure: no naked output).
+    # tag_confirmed=True  -> the ontology's own semantic tag agreed this concept
+    #   is the right *kind* (e.g. a disorder); strongest evidence.
+    # tag_confirmed=False -> the code cleared the grounding threshold on embedding
+    #   similarity ALONE; the ontology tag did not confirm the category. Still
+    #   emitted, but the reviewer is told so via `evidence`.
+    tag_confirmed: bool = False
+    evidence: str | None = None
+    refused: bool = False
+    refusal_reason: str | None = None
+    escalation_to: str | None = None
 
 
 class MissingConcept(BaseModel):

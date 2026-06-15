@@ -75,6 +75,13 @@ class Settings(BaseSettings):
     ontology_import_batch_size: int = 1000
     ontology_embed_batch_size: int = 256
     coverage_threshold: float = 0.6
+
+    # ── Governance (registry-conformant agents) ─────────────────
+    # Mirrors the per-agent `grounding_threshold` in registry/agents/*.agent.yaml.
+    # Below this confidence an agent REFUSES and escalates to human approval
+    # rather than emitting a low-confidence result. The manifest is the source
+    # of truth; this is the runtime knob the code reads (default = manifest 0.9).
+    snomed_mapper_grounding_threshold: float = 0.9
     snomed_rf2_dir: str = "/home/exx/data_sdb/ontologies/snomed/SnomedCT_ManagedServiceUS_PRODUCTION_US1000124_20250901T120000Z/Snapshot"
     rxnorm_rrf_dir: str = "/home/exx/data_sdb/ontologies/rxnorm/rrf"
 

@@ -10,6 +10,8 @@ from __future__ import annotations
 import json
 import logging
 
+from core.config import settings
+from core.governance import RefusalSpan, governance_span, should_refuse
 from core.graph.neo4j_client import get_session
 from core.rag.embeddings import embed_text
 from core.rag.vector_store import PgVectorStore
@@ -20,6 +22,15 @@ from core.validation.clinical_models import (
 )
 
 log = logging.getLogger("noesis.validation")
+
+# Registry conformance (registry/agents/snomed-mapper.agent.yaml):
+#   - this module IS the `snomed-mapper` agent
+#   - below `grounding_threshold` it refuses and escalates instead of emitting a
+#     low-confidence mapping
+#   - it emits one `snomed.map` telemetry span per invocation (PHI-free)
+_AGENT_ID = "snomed-mapper"
+_TELEMETRY_SPAN = "snomed.map"
+_ESCALATION_TO = "genai-workshop-ui-approval-control"
 
 _store = PgVectorStore()
 
@@ -48,8 +59,11 @@ _CATEGORY_TAGS: dict[ConceptCategory, set[str]] = {
     },
 }
 
-# Minimum confidence to consider a mapping valid
-_MIN_CONFIDENCE = 0.65
+# Grounding threshold below which the agent REFUSES rather than emit a mapping.
+# Sourced from config (default = manifest's grounding_threshold of 0.9); read at
+# call time so the manifest stays the source of truth.
+def _grounding_threshold() -> float:
+    return settings.snomed_mapper_grounding_threshold
 
 # Common clinical abbreviations → expanded terms for better embedding
 _ABBREVIATION_EXPANSIONS: dict[str, str] = {
@@ -126,111 +140,186 @@ async def map_concepts_to_snomed(
     return results
 
 
+def _refuse(
+    concept: ClinicalConcept,
+    *,
+    confidence: float,
+    reason: str,
+) -> MappedConcept:
+    """Build a refused MappedConcept and emit the manifest's refusal-span.
+
+    Used in place of a low-confidence (or ungroundable) mapping: the agent
+    declines to emit a code and routes the concept to the human-approval path
+    (``escalation_to``) instead of returning a clean-looking empty mapping. The
+    refusal signal is PHI-free — it carries the concept *category*, not the term.
+    """
+    threshold = _grounding_threshold()
+    RefusalSpan(
+        agent_id=_AGENT_ID,
+        confidence=confidence,
+        threshold=threshold,
+        reason=reason,
+        escalation_to=_ESCALATION_TO,
+        subject=concept.category.value,
+    )
+    return MappedConcept(
+        concept=concept,
+        confidence=round(confidence, 3),
+        refused=True,
+        refusal_reason=reason,
+        escalation_to=_ESCALATION_TO,
+    )
+
+
 async def _map_single_concept(concept: ClinicalConcept) -> MappedConcept:
-    """Map a single clinical concept to SNOMED CT."""
+    """Map a single clinical concept to SNOMED CT.
+
+    Emits one ``snomed.map`` telemetry span per invocation. When the best
+    candidate's confidence falls below the grounding threshold (or nothing maps
+    at all), refuses and escalates rather than emitting a low-confidence code.
+    """
     # Expand abbreviations for better embedding quality
     embed_term = _expand_abbreviations(concept.term)
+    threshold = _grounding_threshold()
 
-    try:
-        # Step 1: Embed and search ontology vectors
-        query_vec = embed_text(embed_term)
-        candidates = await _store.search(
-            query_vec, k=5, source_types=["ontology"]
-        )
-
-        if not candidates:
-            return MappedConcept(concept=concept)
-
-        # Step 2: Score and filter candidates
-        best_match = None
-        best_score = 0.0
-        acceptable_tags = _CATEGORY_TAGS.get(concept.category, set())
-
-        # Normalize scores relative to the top candidate
-        raw_scores = [c.get("score", 0.0) for c in candidates]
-        max_raw = max(raw_scores) if raw_scores else 1.0
-
-        for candidate in candidates:
-            raw_score = candidate.get("score", 0.0)
-            meta = candidate.get("metadata", {})
-            if isinstance(meta, str):
-                meta = json.loads(meta)
-
-            ontology = meta.get("ontology", "snomed")
-            confidence = _normalize_score(raw_score, max_raw)
-
-            if ontology == "rxnorm":
-                # RxNorm match — check TTY for medication category
-                rxcui = meta.get("rxcui", "")
-                tty = meta.get("tty", "").lower()
-                is_med = concept.category == ConceptCategory.MEDICATION
-
-                if is_med and tty in _RXNORM_MED_TTYS:
-                    confidence = min(1.0, confidence + 0.1)
-                elif is_med:
-                    confidence *= 0.9  # Unknown TTY but still medication category
-                else:
-                    confidence *= 0.5  # RxNorm match for non-medication category
-
-                if confidence > best_score:
-                    best_score = confidence
-                    best_match = {
-                        "rxcui": rxcui,
-                        "sctid": None,
-                        "snomed_term": candidate.get("text", ""),
-                        "semantic_tag": f"rxnorm:{tty}",
-                        "confidence": round(confidence, 3),
-                        "source_ontology": "rxnorm",
-                    }
-            else:
-                # SNOMED match — existing logic
-                semantic_tag = meta.get("semantic_tag", "").lower()
-                sctid = meta.get("sctid", "")
-
-                tag_match = semantic_tag in acceptable_tags
-                if tag_match:
-                    confidence = min(1.0, confidence + 0.1)
-                elif acceptable_tags:
-                    confidence *= 0.7
-
-                if confidence > best_score:
-                    best_score = confidence
-                    best_match = {
-                        "rxcui": None,
-                        "sctid": sctid,
-                        "snomed_term": candidate.get("text", ""),
-                        "semantic_tag": semantic_tag,
-                        "confidence": round(confidence, 3),
-                        "source_ontology": "snomed",
-                    }
-
-        if not best_match or best_score < _MIN_CONFIDENCE:
-            return MappedConcept(concept=concept)
-
-        # Step 3: Fetch ICD-10 codes
-        if best_match["source_ontology"] == "rxnorm" and best_match.get("rxcui"):
-            # For RxNorm matches, resolve SNOMED cross-ref first
-            sctid, icd10_codes = await _resolve_rxnorm_to_snomed(
-                best_match["rxcui"]
+    with governance_span(_TELEMETRY_SPAN, agent_id=_AGENT_ID) as span:
+        try:
+            # Step 1: Embed and search ontology vectors (tool: snomed-search)
+            query_vec = embed_text(embed_term)
+            candidates = await _store.search(
+                query_vec, k=5, source_types=["ontology"]
             )
-            best_match["sctid"] = sctid
-        else:
-            icd10_codes = await _fetch_icd10_codes(best_match["sctid"])
+            span.add_tool_call()  # snomed-search
 
-        return MappedConcept(
-            concept=concept,
-            sctid=best_match["sctid"],
-            snomed_term=best_match["snomed_term"],
-            semantic_tag=best_match["semantic_tag"],
-            confidence=best_match["confidence"],
-            icd10_codes=icd10_codes,
-            rxcui=best_match.get("rxcui"),
-            source_ontology=best_match.get("source_ontology", "snomed"),
-        )
+            if not candidates:
+                span.record(confidence=0.0, refusal_flag=True)
+                return _refuse(
+                    concept, confidence=0.0,
+                    reason="no ontology candidate found",
+                )
 
-    except Exception as e:
-        log.warning("Failed to map concept '%s': %s", concept.term, e)
-        return MappedConcept(concept=concept)
+            # Step 2: Score and filter candidates
+            best_match = None
+            best_score = 0.0
+            acceptable_tags = _CATEGORY_TAGS.get(concept.category, set())
+
+            # Normalize scores relative to the top candidate
+            raw_scores = [c.get("score", 0.0) for c in candidates]
+            max_raw = max(raw_scores) if raw_scores else 1.0
+
+            for candidate in candidates:
+                raw_score = candidate.get("score", 0.0)
+                meta = candidate.get("metadata", {})
+                if isinstance(meta, str):
+                    meta = json.loads(meta)
+
+                ontology = meta.get("ontology", "snomed")
+                confidence = _normalize_score(raw_score, max_raw)
+
+                if ontology == "rxnorm":
+                    # RxNorm match — check TTY for medication category
+                    rxcui = meta.get("rxcui", "")
+                    tty = meta.get("tty", "").lower()
+                    is_med = concept.category == ConceptCategory.MEDICATION
+
+                    # "tag-confirmed" for RxNorm = a recognized medication TTY on
+                    # a medication concept (the ontology agrees on the kind).
+                    tag_confirmed = is_med and tty in _RXNORM_MED_TTYS
+                    if tag_confirmed:
+                        confidence = min(1.0, confidence + 0.1)
+                    elif is_med:
+                        confidence *= 0.9  # Unknown TTY but still medication
+                    else:
+                        confidence *= 0.5  # RxNorm match, non-medication category
+
+                    if confidence > best_score:
+                        best_score = confidence
+                        best_match = {
+                            "rxcui": rxcui,
+                            "sctid": None,
+                            "snomed_term": candidate.get("text", ""),
+                            "semantic_tag": f"rxnorm:{tty}",
+                            "confidence": round(confidence, 3),
+                            "source_ontology": "rxnorm",
+                            "tag_confirmed": tag_confirmed,
+                        }
+                else:
+                    # SNOMED match — existing logic
+                    semantic_tag = meta.get("semantic_tag", "").lower()
+                    sctid = meta.get("sctid", "")
+
+                    tag_match = semantic_tag in acceptable_tags
+                    if tag_match:
+                        confidence = min(1.0, confidence + 0.1)
+                    elif acceptable_tags:
+                        confidence *= 0.7
+
+                    if confidence > best_score:
+                        best_score = confidence
+                        best_match = {
+                            "rxcui": None,
+                            "sctid": sctid,
+                            "snomed_term": candidate.get("text", ""),
+                            "semantic_tag": semantic_tag,
+                            "confidence": round(confidence, 3),
+                            "source_ontology": "snomed",
+                            "tag_confirmed": tag_match,
+                        }
+
+            # Governance gate: below the grounding threshold (or no usable
+            # candidate), REFUSE and escalate rather than emit a weak mapping.
+            if not best_match or should_refuse(best_score, threshold):
+                span.record(confidence=best_score, refusal_flag=True)
+                return _refuse(
+                    concept, confidence=best_score,
+                    reason=(
+                        f"confidence {best_score:.3f} below grounding "
+                        f"threshold {threshold:.2f}"
+                    ),
+                )
+
+            # Step 3: Fetch ICD-10 codes (tool: snomed-get-concept)
+            if best_match["source_ontology"] == "rxnorm" and best_match.get("rxcui"):
+                # For RxNorm matches, resolve SNOMED cross-ref first
+                sctid, icd10_codes = await _resolve_rxnorm_to_snomed(
+                    best_match["rxcui"]
+                )
+                best_match["sctid"] = sctid
+            else:
+                icd10_codes = await _fetch_icd10_codes(best_match["sctid"])
+            span.add_tool_call()  # snomed-get-concept
+
+            # Provenance: did the ontology's semantic tag confirm the category,
+            # or did this clear the threshold on embedding similarity alone?
+            tag_confirmed = bool(best_match.get("tag_confirmed"))
+            evidence = (
+                "ontology semantic tag confirmed the concept category"
+                if tag_confirmed
+                else "STRONG EMBEDDING MATCH, NOT TAG-CONFIRMED — the ontology "
+                "tag did not confirm the category; review before relying on it"
+            )
+
+            span.record(confidence=best_match["confidence"], refusal_flag=False)
+            return MappedConcept(
+                concept=concept,
+                sctid=best_match["sctid"],
+                snomed_term=best_match["snomed_term"],
+                semantic_tag=best_match["semantic_tag"],
+                confidence=best_match["confidence"],
+                icd10_codes=icd10_codes,
+                rxcui=best_match.get("rxcui"),
+                source_ontology=best_match.get("source_ontology", "snomed"),
+                tag_confirmed=tag_confirmed,
+                evidence=evidence,
+            )
+
+        except Exception as e:
+            log.warning("Failed to map concept '%s': %s", concept.term, e)
+            span.record(confidence=0.0, refusal_flag=True)
+            return _refuse(
+                concept, confidence=0.0,
+                reason="mapping error; escalated for review",
+            )
 
 
 async def _resolve_rxnorm_to_snomed(rxcui: str) -> tuple[str | None, list[str]]:
@@ -281,6 +370,14 @@ async def _fetch_icd10_codes(sctid: str) -> list[str]:
         return []
 
 
+# Embedding-similarity ceiling for the top candidate. Set to 0.95 so a genuine
+# top-similarity match can clear the 0.9 grounding threshold on embedding
+# evidence ALONE, while the wrong-tag penalty (×0.7) still drops mismatches
+# below 0.9 → refuse. Tag-confirmed matches get a further +0.1 and saturate at
+# 1.0. Raised from 0.85 during snomed-mapper conformance (manifest threshold 0.9).
+_SIMILARITY_CEILING = 0.95
+
+
 def _normalize_score(raw_score: float, max_score: float) -> float:
     """Normalize pgvector inner product score to 0-1 confidence.
 
@@ -289,15 +386,17 @@ def _normalize_score(raw_score: float, max_score: float) -> float:
 
     For nomic-embed-text-v1.5 with inner product, raw scores are
     typically 300-500+. We normalize relative to the top candidate:
-    the best match gets ~0.85, others scale proportionally.
+    the best match gets ~0.95, others scale proportionally. A strong
+    embedding match can therefore clear the 0.9 grounding threshold on
+    its own; the semantic-tag check then either confirms it (+0.1) or,
+    on a category mismatch, penalizes it (×0.7) back below threshold.
     """
     if max_score <= 0:
         return 0.0
     if raw_score <= 0:
         return 0.0
-    # Scale so top candidate ≈ 0.85 (leaving room for tag match boost)
     ratio = raw_score / max_score
-    return round(max(0.0, min(1.0, ratio * 0.85)), 3)
+    return round(max(0.0, min(1.0, ratio * _SIMILARITY_CEILING)), 3)
 
 
 def _expand_abbreviations(term: str) -> str:
